@@ -1,0 +1,125 @@
+menu "Brew Station"
+
+    config CS_WIFI_SSID
+        string "WiFi SSID (2.4 GHz)"
+        default ""
+
+    config CS_WIFI_PASSWORD
+        string "WiFi password"
+        default ""
+
+    config CS_HOSTNAME
+        string "Hostname (mDNS: <hostname>.local)"
+        default "brew-station"
+
+    config CS_WIFI_WATCHDOG_S
+        int "Reboot when WiFi stays down this many seconds (0 = never)"
+        range 0 3600
+        default 60
+
+    config CS_STATIC_IP
+        string "Fixed IP address (empty = DHCP)"
+        default ""
+        help
+            The grinder is set up with this bridge's IP address (Connectivity ->
+            Machine To Machine -> Enable Xenia), so the address must not change.
+            Either set a DHCP reservation in the router and leave this empty, or
+            enter a fixed address outside the router's DHCP pool.
+
+    config CS_STATIC_NETMASK
+        string "Netmask (fixed IP only)"
+        default "255.255.255.0"
+
+    config CS_STATIC_GATEWAY
+        string "Gateway (fixed IP only)"
+        default ""
+
+    config CS_STATIC_DNS
+        string "DNS server (fixed IP only, empty = gateway)"
+        default ""
+
+    menu "Firmware update over WiFi"
+
+        config CS_OTA_TOKEN
+            string "OTA token (empty = updates over WiFi off)"
+            default ""
+            help
+                POST /api/ota needs this in an X-OTA-Token header. Anyone on the
+                network who knows it can replace the firmware, so use a long
+                random string. tools/ota.sh reads it from sdkconfig.
+
+        config CS_OTA_CONFIRM_S
+            int "Seconds a new firmware has to get WiFi up before rolling back"
+            range 30 600
+            default 120
+
+    endmenu
+
+    menu "Grinder link (E64 WS)"
+
+        config CS_FINISHING_HOLD_S
+            int "Finishing hold, seconds"
+            range 3 60
+            default 6
+            help
+                How long the shot result is shown as ACTIVE FINISHING. The grinder
+                takes the result only from a poll (every ~2 s) that sees it, so
+                never below 3 s (gbs-anywhere MIN_FINISHING_HOLD).
+
+        config CS_SHOT_WINDOW_S
+            int "Shot window, seconds (0 = no limit)"
+            range 0 3600
+            default 180
+            help
+                A shot with no result after this long is aborted
+                (MA_EXTRACTION_STATUS 2), and the grinder skips it.
+
+        config CS_KNOB_SCALE_ACTIONS
+            bool "On the grinder's knob press, tare the scale and restart its timer"
+            default y
+            help
+                Shot flow step 2: tare, reset the AKU timer, then start it (timing
+                mode 1 counts from the knob press). The timer stops when the result
+                is reported or the shot is aborted. The AKU timer is display only.
+
+    endmenu
+
+    menu "Shot detection (AKU)"
+
+        choice CS_REPORT_DEFAULT
+            prompt "Report mode until one is picked on the page"
+            default CS_REPORT_DEFAULT_AUTO
+            help
+                The page's Auto / Target / Manual switch sets the mode; it is kept
+                in NVS. This is only the mode before the first pick.
+                Auto: when the scale sees the flow stop. Target: as soon as the
+                cup holds the grinder's recipe weight (auto without one). Manual:
+                Send result on the page only.
+
+            config CS_REPORT_DEFAULT_AUTO
+                bool "Auto (end of flow)"
+            config CS_REPORT_DEFAULT_TARGET
+                bool "Target (recipe weight reached)"
+            config CS_REPORT_DEFAULT_MANUAL
+                bool "Manual"
+        endchoice
+
+        choice CS_TIMING_MODE
+            prompt "Shot time"
+            default CS_TIMING_MODE_KNOB
+
+            config CS_TIMING_MODE_KNOB
+                bool "Mode 1: from the knob press to the end of flow"
+            config CS_TIMING_MODE_DROPS
+                bool "Mode 3: from the first drops to the end of flow, plus pre-infusion"
+        endchoice
+
+        config CS_PREINFUSION_S
+            int "Pre-infusion seconds added in mode 3"
+            range 0 30
+            default 0
+            depends on CS_TIMING_MODE_DROPS
+
+    endmenu
+
+endmenu

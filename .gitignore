@@ -1,0 +1,42 @@
+# --- Secrets and local settings -------------------------------------------
+# sdkconfig holds the WiFi SSID and password and the OTA token. Commit only
+# sdkconfig.defaults (no secrets in it).
+sdkconfig
+sdkconfig.old
+sdkconfig.*.bak
+*.env
+.env*
+secrets.*
+
+# --- Logs and recordings (serial logs show the network, IPs, device names) --
+logs/
+*.log
+
+# --- Build output --------------------------------------------------------------
+build/
+build-host/
+build_number.txt
+compile_commands.json
+managed_components/
+.pio/
+
+# --- Reference repos (cloned for reading) and private notes ---------------
+refs/
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+
+# --- Scratch and working notes ---------------------------------------------
+mock/
+KICKOFF_PROMPT*.md
+*_PROMPT*.md
+
+# --- Editors and OS ------------------------------------------------------------
+.cache/
+.clangd
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db

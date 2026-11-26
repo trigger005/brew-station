@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brew Station</title>
+<style>
+:root {
+  --bg: #f6f5f3; --card: #ffffff; --text: #1d1b19; --muted: #6f6a64; --line: #e4e0db;
+  --accent: #8a5a2b; --accent-text: #ffffff; --ok: #2f7d4f; --bad: #b3402e; --warn: #a66b00;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161412; --card: #211e1b; --text: #f1ede8; --muted: #a39d95; --line: #35312d;
+    --accent: #d39b62; --accent-text: #1d1b19; --ok: #5cc28a; --bad: #ef7a66; --warn: #e2a63b;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+main { max-width: 480px; margin: 0 auto; padding: 16px; display: grid; gap: 12px; }
+header { display: flex; align-items: center; justify-content: space-between; }
+h1 { font-size: 18px; margin: 0; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); }
+.dot.ok { background: var(--ok); }
+.dot.wait { background: var(--warn); }
+.weight { text-align: center; padding: 20px 16px; }
+.weight .value { font: 600 64px/1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -1px; }
+.weight .unit { font-size: 22px; color: var(--muted); margin-left: 4px; }
+.weight .sub { margin-top: 8px; font-size: 13px; color: var(--muted); }
+.stale .value { opacity: .35; }
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; }
+.grid.two { grid-template-columns: 1fr 1fr; }
+/* No scale: the grinder card is dimmed and its mode switch locked. */
+#machineCard.noscale #modeSeg, #machineCard.noscale #idleView { opacity: .45; }
+.noscale-msg { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: var(--bg); color: var(--warn); font-size: 14px; font-weight: 600; text-align: center; }
+.grid .k { font-size: 12px; color: var(--muted); }
+.grid .v { font: 600 20px/1.2 var(--mono); font-variant-numeric: tabular-nums; }
+.buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+button {
+  font: inherit; font-weight: 600; padding: 12px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text);
+}
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button:disabled { opacity: .45; cursor: default; }
+h2 { font-size: 14px; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
+select { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 13px; }
+dt { color: var(--muted); }
+dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }
+#log { font: 12px/1.5 var(--mono); max-height: 220px; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
+#log li { border-bottom: 1px solid var(--line); padding: 2px 0; }
+#log .t { color: var(--muted); margin-right: 8px; }
+.more > summary {
+  cursor: pointer; list-style: none; padding: 12px 16px; border-radius: 14px;
+  background: var(--card); border: 1px solid var(--line); font-size: 14px; font-weight: 600; color: var(--muted);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.more > summary::-webkit-details-marker { display: none; }
+.more > summary::after { content: "▸"; transition: transform .15s; }
+.more[open] > summary::after { transform: rotate(90deg); }
+.more-body { display: grid; gap: 12px; margin-top: 12px; }
+.err { color: var(--bad); font-size: 13px; min-height: 1.2em; margin: 8px 0 0; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.row h2 { margin: 0; }
+.badge { font-size: 13px; font-weight: 600; padding: 3px 10px; border-radius: 99px; background: var(--bg); border: 1px solid var(--line); }
+.badge.running { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.badge.finishing { color: var(--ok); border-color: var(--ok); }
+.badge.aborted { color: var(--bad); border-color: var(--bad); }
+.note { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+.note.warn { color: var(--warn); }
+.seg { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 10px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: var(--card); padding: 9px 4px; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-checked="true"] { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+/* Tapped, waiting for the bridge: shows at once, so the switch feels instant. */
+.seg button.pending { background: color-mix(in srgb, var(--accent) 35%, var(--card)); }
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.stat { background: var(--bg); border-radius: 10px; padding: 10px 12px; }
+.stat .k { font-size: 12px; color: var(--muted); }
+.stat .v { font: 600 28px/1.15 var(--mono); font-variant-numeric: tabular-nums; }
+.stat .v small { font-size: 15px; color: var(--muted); font-weight: 500; margin-left: 2px; }
+.stat .s { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.live { margin-top: 12px; text-align: center; }
+.live .v { font: 600 52px/1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -1px; }
+.live .v small { font-size: 20px; color: var(--muted); font-weight: 500; }
+.bar { height: 8px; border-radius: 99px; background: var(--bg); border: 1px solid var(--line); margin: 12px 0 6px; overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.live .s { font-size: 13px; color: var(--muted); }
+.actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+.cta { margin-top: 12px; padding: 12px; border: 2px dashed var(--accent); border-radius: 12px; text-align: center; font-size: 17px; font-weight: 600; color: var(--accent); }
+.sent { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--ok); border-radius: 10px; }
+.sent .k { font-size: 12px; color: var(--muted); }
+.sent .v { font: 600 26px/1.2 var(--mono); font-variant-numeric: tabular-nums; }
+.sent .s { font-size: 13px; color: var(--ok); }
+.sent .s.warn { color: var(--warn); }
+.shot { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.shot label { font-size: 12px; color: var(--muted); display: grid; gap: 4px; }
+.shot input {
+  font: 600 20px/1.2 var(--mono); padding: 8px 10px; border-radius: 10px; width: 100%;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text);
+}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Brew Station</h1>
+    <span class="chip"><span id="linkDot" class="dot wait"></span><span id="linkText">connecting…</span></span>
+  </header>
+
+  <section class="card weight" id="weightCard">
+    <div><span class="value" id="weight">--.-</span><span class="unit">g</span></div>
+    <div class="sub" id="scaleLine" role="status">Scale not connected</div>
+  </section>
+
+  <section class="card grid two">
+    <div><div class="k">Timer</div><div class="v" id="timer">--:--</div></div>
+    <div><div class="k">Battery</div><div class="v" id="battery">–</div></div>
+  </section>
+
+  <section class="card">
+    <div class="buttons">
+      <button class="primary" data-cmd="tare">Tare</button>
+      <button data-cmd="start">Start timer</button>
+      <button data-cmd="stop">Stop timer</button>
+      <button data-cmd="reset">Reset timer</button>
+    </div>
+    <p class="err" id="err" role="alert"></p>
+  </section>
+
+  <section class="card" id="machineCard">
+    <div class="row">
+      <h2>Grinder</h2>
+      <span class="badge" id="phase">–</span>
+    </div>
+    <div class="seg" id="modeSeg" role="radiogroup" aria-label="Report mode">
+      <button role="radio" aria-checked="false" data-mode="auto">Auto</button>
+      <button role="radio" aria-checked="false" data-mode="target">Target</button>
+      <button role="radio" aria-checked="false" data-mode="manual">Manual</button>
+    </div>
+    <div class="noscale-msg" id="noScaleMsg" hidden>Scale not connected: wake the scale to use the grinder</div>
+    <p class="note" id="modeHint"></p>
+    <p class="note warn" id="grinderWarn" hidden></p>
+
+    <div id="idleView">
+      <div class="cta" id="cta">Press the grinder knob to start</div>
+      <div class="sent" id="sentBox" hidden>
+        <div class="k" id="sentWhen">Sent to the grinder</div>
+        <div class="v" id="sentValue">–</div>
+        <div class="s" id="sentWhy"></div>
+      </div>
+      <div class="stats">
+        <div class="stat"><div class="k">Recipe weight</div><div class="v" id="recipeV">–</div><div class="s" id="recipeS"></div></div>
+        <div class="stat"><div class="k" id="tile2K">In the cup</div><div class="v" id="tile2V">–</div><div class="s" id="tile2S"></div></div>
+      </div>
+    </div>
+
+    <div id="liveView" hidden>
+      <div class="live">
+        <div class="v"><span id="liveV">0.0</span><small id="liveOf"> g</small></div>
+        <div class="bar" id="liveBar"><i></i></div>
+        <div class="s" id="liveS"></div>
+      </div>
+      <div class="actions">
+        <button class="primary" id="sendNow">Send now</button>
+        <button class="abort">Abort shot</button>
+      </div>
+    </div>
+
+    <div id="manualView" hidden>
+      <div class="stats">
+        <div class="stat"><div class="k">Recipe weight</div><div class="v" id="mRecipeV">–</div><div class="s" id="mRecipeS"></div></div>
+        <div class="stat"><div class="k">In the cup</div><div class="v" id="mCupV">–</div><div class="s">scale</div></div>
+      </div>
+      <div class="shot">
+        <label>Shot time, s<input id="shotTime" inputmode="decimal" autocomplete="off" placeholder="–"></label>
+        <label>Weight, g<input id="shotWeight" inputmode="decimal" autocomplete="off" placeholder="–"></label>
+        <button class="primary" id="sendShot">Send result</button>
+        <button class="abort">Abort shot</button>
+      </div>
+      <p class="note">Empty fields: the timer and the scale weight are used.</p>
+    </div>
+    <p class="err" id="shotErr" role="alert"></p>
+  </section>
+
+  <details class="more" id="more">
+    <summary>Diagnostics</summary>
+    <div class="more-body">
+      <section class="card">
+        <h2>Events</h2>
+        <ul id="log"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Diagnostics</h2>
+        <dl id="diag"></dl>
+      </section>
+    </div>
+  </details>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+let ws, retryMs = 500, lastStatus = null, lastScaleLine = "";
+let statusAt = 0;  // performance.now() when lastStatus arrived
+
+function fmtUptime(ms) {
+  const s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60;
+  return `${h}:${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function setLink(state, text) {
+  $("linkDot").className = "dot " + state;
+  $("linkText").textContent = text;
+}
+
+// Running time as the server counts it, moved on by the time since it said so.
+function runningMs() {
+  const m = lastStatus && lastStatus.machine;
+  if (!m || m.phase !== "running") return 0;
+  return m.running_ms + (performance.now() - statusAt);
+}
+
+const g1 = (x) => x.toFixed(1);
+const big = (v, unit) => `${v}<small>${unit}</small>`;
+
+// The weight that counts now: the detector's (cup off) once flowing, else the scale.
+function cupNow() {
+  const st = lastStatus;
+  if (!st) return null;
+  const a = st.auto, s = st.scale;
+  if (a && a.armed && a.progress === "flowing") return a.grams;
+  return s.connected && s.weight_age_ms >= 0 && s.weight_age_ms < 3000 ? s.weight_g : null;
+}
+
+// Badge and running time: every 200 ms, between status messages.
+function renderMachine() {
+  const m = lastStatus && lastStatus.machine;
+  if (!m) return;
+  let text, cls = m.phase;
+  if (m.phase === "running") {
+    text = `${m.requested_by_grinder ? "Brewing" : "Flush"} ${g1(runningMs() / 1000)} s`;
+  } else if (m.phase === "finishing") {
+    cls = m.result.aborted ? "aborted" : "finishing";
+    text = m.result.aborted ? "Aborted" : "Sent";
+  } else {
+    text = m.grind_blocked === "none" ? "Ready" : `Blocked: ${m.grind_blocked}`;
+  }
+  const badge = $("phase");
+  badge.className = "badge " + cls;
+  badge.textContent = text;
+  if (m.phase === "running") $("shotTime").placeholder = g1(runningMs() / 1000);
+}
+
+const HINT = {
+  auto: "Sends about 3 s after the flow stops.",
+  target: "Sends when the cup reaches the recipe weight (no recipe or a short shot: as Auto).",
+  manual: "Enter the result and tap Send result.",
+};
+let pendingMode = null;  // tapped, the bridge hasn't answered yet
+
+function renderGrinder(st) {
+  const m = st.machine, a = st.auto;
+  const mode = a ? a.mode : "manual";
+  const running = m.phase === "running";
+  // No scale: nothing to weigh, so the card is off until it connects. A shot
+  // already running keeps Send and Abort, so it can always be ended.
+  const noScale = !st.scale.connected;
+  $("machineCard").classList.toggle("noscale", noScale);
+  $("noScaleMsg").hidden = !noScale;
+  document.querySelectorAll("#modeSeg button").forEach((b) => {
+    b.setAttribute("aria-checked", String(b.dataset.mode === mode));
+    b.classList.toggle("pending", b.dataset.mode === pendingMode && pendingMode !== mode);
+    b.disabled = running || noScale;
+  });
+  if ($("modeHint").textContent !== HINT[mode]) $("modeHint").textContent = HINT[mode];
+
+  // Only a problem shows here; the link details are in Diagnostics.
+  const warn = m.grinder.age_ms < 0
+    ? `Grinder not seen yet. On the E64 WS: Connectivity → Machine To Machine → Enable Xenia, IP ${st.wifi.ip}.`
+    : m.grinder.age_ms > 10000 ? `No request from the grinder for ${fmtAge(m.grinder.age_ms)}.` : "";
+  $("grinderWarn").hidden = !warn;
+  if ($("grinderWarn").textContent !== warn) $("grinderWarn").textContent = warn;
+
+  const recipe = m.recipe_g;
+  const recipeV = recipe !== null ? big(g1(recipe), "g") : "–";
+  const recipeS = recipe !== null ? (m.filter ? `filter ${m.filter}` : "") : "no GbS grind yet";
+  // Manual: the inputs. Auto/Target: the live view (Send now and Abort only).
+  const manual = running && mode === "manual";
+  const live = running && !manual;
+  $("idleView").hidden = running;
+  $("liveView").hidden = !live;
+  $("manualView").hidden = !manual;
+  const cup = cupNow();
+
+  if (!running) {
+    $("cta").hidden = m.phase !== "ready" || !!warn || noScale;
+    $("recipeV").innerHTML = recipeV;
+    $("recipeS").textContent = recipeS;
+    // What the grinder got last: stays until the next one (or a reboot).
+    const ls = m.last_shot;
+    $("sentBox").hidden = !ls;
+    if (ls) {
+      const mine = a && a.last && a.last.time_ms === ls.time_ms && Math.abs(a.last.weight_g - ls.weight_g) < 0.05;
+      const by = mine ? (a.last.by === "target" ? "Target reached" : "End of flow") : "Sent by hand";
+      const out = ls.time_ms <= 10000 || ls.time_ms > 80000;
+      $("sentWhen").textContent = "Sent to the grinder" + (ls.age_ms >= 0 ? ` · ${fmtAge(ls.age_ms)} ago` : "");
+      $("sentValue").textContent = `${g1(ls.time_ms / 1000)} s · ${g1(ls.weight_g)} g`;
+      $("sentWhy").textContent = out ? `${by} · outside 10–80 s: the grinder won't adjust` : by;
+      $("sentWhy").classList.toggle("warn", out);
+    }
+    if (ls && recipe !== null) {
+      const d = ls.weight_g - recipe;
+      $("tile2K").textContent = "Vs recipe";
+      $("tile2V").innerHTML = big((d >= 0 ? "+" : "") + g1(d), "g");
+      $("tile2S").textContent = `${Math.round((ls.weight_g / recipe) * 100)} % of the recipe`;
+    } else {
+      $("tile2K").textContent = "In the cup";
+      $("tile2V").innerHTML = cup !== null ? big(g1(cup), "g") : "–";
+      $("tile2S").textContent = "scale";
+    }
+  }
+
+  if (live) {
+    const target = a && a.armed && a.watching === "target" ? a.target_g : null;
+    const ref = target !== null ? target : recipe;
+    $("liveV").textContent = cup !== null ? g1(cup) : "–";
+    $("liveOf").textContent = target !== null ? ` / ${g1(target)} g` : " g";
+    $("liveBar").hidden = ref === null;
+    if (ref) $("liveBar").firstElementChild.style.width = `${Math.min(100, Math.max(0, ((cup || 0) / ref) * 100))}%`;
+    const end = target !== null ? `sends at ${g1(target)} g`
+      : recipe !== null ? `recipe ${g1(recipe)} g · sends when the flow stops` : "sends when the flow stops";
+    const p = a && a.armed ? a.progress : "";
+    $("liveS").textContent = p === "settling" ? "Waiting for the scale to settle…"
+      : p === "ready" ? "Waiting for the first drops…"
+      : p === "flowing" ? `Flowing · ${end}`
+      : p === "done" ? "Flow stopped · sending…"
+      : "Not watching the scale: use Send now";
+  }
+
+  if (manual) {
+    $("mRecipeV").innerHTML = recipeV;
+    $("mRecipeS").textContent = recipeS;
+    $("mCupV").innerHTML = cup !== null ? big(g1(cup), "g") : "–";
+    $("shotWeight").placeholder = cup !== null && cup > 0 ? g1(cup) : (recipe !== null ? g1(recipe) : "–");
+  }
+}
+
+function render(st) {
+  lastStatus = st;
+  statusAt = performance.now();
+  const s = st.scale;
+  const stale = !s.connected || s.weight_age_ms < 0 || s.weight_age_ms > 3000;
+  $("weightCard").classList.toggle("stale", stale);
+  $("weight").textContent = s.weight_age_ms >= 0 ? s.weight_g.toFixed(1) : "--.-";
+
+  const line = s.connected
+    ? s.name + (s.weight_age_ms > 3000 ? " · no data" : "")
+    : (s.name ? `Searching for ${s.name}…` : "Searching for scale…");
+  if (line !== lastScaleLine) { $("scaleLine").textContent = line; lastScaleLine = line; }
+
+  $("timer").textContent = s.timer_s >= 0 ? `${String(Math.floor(s.timer_s / 60)).padStart(2, "0")}:${String(s.timer_s % 60).padStart(2, "0")}` : "--:--";
+  $("battery").textContent = s.battery_pct >= 0 ? `${s.battery_pct}%` : "–";
+  document.querySelectorAll("button[data-cmd]").forEach((b) => (b.disabled = !s.connected));
+
+  const m = st.machine;
+  renderMachine();
+  renderGrinder(st);
+
+  const p = s.parse, n = s.notif_ms;
+  const rows = [
+    ["Scale", s.connected ? `${s.addr} · ${s.rssi} dBm` : "not connected"],
+    ["Connects", s.connects],
+    ["Notifications", `${s.notifications} · up to ${s.weights_per_notif_max} weight frames in one`],
+    ["Interval ms", s.connected ? `min ${n.min} · avg ${n.avg} · max ${n.max}` : "–"],
+    ["Weight rate", `${s.rate_hz.toFixed(1)} Hz`],
+    ["Frames", `${p.frames} ok · ${p.bad_xor} bad xor · ${p.bad_len} bad len · ${p.truncated} cut · ${p.garbage} junk · ${p.unknown} unknown`],
+    ["Grinder", m.grinder.age_ms < 0 ? "not seen yet" : `${m.grinder.ip} · last request ${fmtAge(m.grinder.age_ms)} ago · ${m.polls} polls`],
+    ["Grinder API", `${m.requests} requests · ${m.refused} refused` + (m.dropped ? ` · ${m.dropped} events lost` : "") + ` · hold ${m.finishing_hold_ms / 1000} s · window ${m.shot_window_ms ? m.shot_window_ms / 1000 + " s" : "none"}`],
+    ["WiFi", `${st.wifi.ip} · ${st.wifi.rssi} dBm`],
+    ["Host", `${st.wifi.host}.local`],
+    ["Firmware", st.fw ? `${st.fw.version} · build ${st.fw.build} · ${st.fw.built}` : "–"],
+    ["Uptime", fmtUptime(st.uptime_ms)],
+    ["Last start", st.fw && st.fw.reset ? st.fw.reset : "–"],
+  ];
+  $("diag").replaceChildren(...rows.flatMap(([k, v]) => {
+    const dt = document.createElement("dt"); dt.textContent = k;
+    const dd = document.createElement("dd"); dd.textContent = v;
+    return [dt, dd];
+  }));
+}
+
+function fmtAge(ms) {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s} s`;
+  if (s < 3600) return `${Math.floor(s / 60)} min`;
+  return `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`;
+}
+
+function addLog(uptimeMs, msg) {
+  const li = document.createElement("li");
+  const t = document.createElement("span"); t.className = "t"; t.textContent = fmtUptime(uptimeMs);
+  li.append(t, document.createTextNode(msg));
+  const log = $("log");
+  log.prepend(li);
+  while (log.children.length > 50) log.lastChild.remove();
+}
+
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => { retryMs = 500; setLink("ok", "live"); };
+  ws.onmessage = (e) => {
+    let m; try { m = JSON.parse(e.data); } catch { return; }
+    if (m.t === "status") render(m);
+    else if (m.t === "log") addLog(m.uptime_ms, m.msg);
+  };
+  ws.onclose = () => {
+    setLink("wait", "reconnecting…");
+    setTimeout(connect, retryMs);
+    retryMs = Math.min(retryMs * 2, 5000);
+  };
+}
+
+async function post(url, errId = "err") {
+  $(errId).textContent = "";
+  try {
+    const r = await fetch(url, { method: "POST" });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      $(errId).textContent = body.error || `Request failed (${r.status})`;
+    }
+    return r.ok;
+  } catch {
+    $(errId).textContent = "Bridge not reachable";
+    return false;
+  }
+}
+
+const num = (v) => v.trim().replace(",", ".");
+
+function report(t, w) {
+  return post(`/api/shot/report?time_s=${t}` + (w ? `&weight_g=${w}` : ""), "shotErr");
+}
+
+// Send now: the running time and what is in the cup now (none: the recipe weight).
+$("sendNow").addEventListener("click", () => {
+  const w = cupNow();
+  report(g1(runningMs() / 1000), w !== null && w > 0 ? g1(w) : "");
+});
+
+$("sendShot").addEventListener("click", async () => {
+  const cup = cupNow();
+  const t = num($("shotTime").value) || g1(runningMs() / 1000);
+  const w = num($("shotWeight").value) || (cup !== null && cup > 0 ? g1(cup) : "");
+  if (!/^\d+(\.\d+)?$/.test(t)) { $("shotErr").textContent = "Shot time must be a number of seconds"; return; }
+  if (w && !/^\d+(\.\d+)?$/.test(w)) { $("shotErr").textContent = "Weight must be a number of grams"; return; }
+  // The typed weight stays for the next shot; the time is per shot.
+  if (await report(t, w)) $("shotTime").value = "";
+});
+
+document.querySelectorAll("button.abort").forEach((b) =>
+  b.addEventListener("click", () => post("/api/shot/abort", "shotErr")));
+
+// Mode switch: the tapped button lights up at once (pending) and becomes the
+// mode as soon as the bridge accepts it, from its reply, without waiting
+// for the next status message.
+document.querySelectorAll("#modeSeg button").forEach((b) =>
+  b.addEventListener("click", async () => {
+    const want = b.dataset.mode;
+    if (!lastStatus || !lastStatus.auto || lastStatus.auto.mode === want) return;
+    pendingMode = want;
+    renderGrinder(lastStatus);
+    const ok = await post(`/api/mode?m=${want}`, "shotErr");
+    if (ok && lastStatus && lastStatus.auto) lastStatus.auto.mode = want;
+    if (pendingMode === want) pendingMode = null;
+    if (lastStatus) renderGrinder(lastStatus);
+  }));
+setInterval(renderMachine, 200);
+
+document.querySelectorAll("button[data-cmd]").forEach((b) =>
+  b.addEventListener("click", () => {
+    const set = b.dataset.set ? `&set=${b.dataset.set}` : "";
+    post(`/api/scale/cmd?c=${b.dataset.cmd}${set}`);
+  }));
+
+// Diagnostics starts closed on every load.
+
+fetch("/api/scale").then((r) => r.json()).then(render).catch(() => {});
+connect();
+</script>
+</body>
+</html>
