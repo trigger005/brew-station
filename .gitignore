@@ -40,3 +40,6 @@ KICKOFF_PROMPT*.md
 *~
 .DS_Store
 Thumbs.db
+
+# Enclosure design files, kept out of the repo
+enclosure/
