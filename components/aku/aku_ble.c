@@ -2,7 +2,8 @@
 // NimBLE central for the Varia AKU, ported from GaggiMate's NimBLE-Arduino
 // driver (refs/esp-arduino-ble-scales/src/scales/varia.cpp) to the ESP-IDF
 // NimBLE host. Flow: scan -> connect -> discover FFF0 -> FFF1/FFF2 -> CCCD ->
-// notifications. Any failure or disconnect goes back to scanning.
+// notifications. Any failure or disconnect goes back to scanning: non-stop
+// for a few minutes, then a short look every so often (or none) until woken.
 #include <stdio.h>
 #include <string.h>
 
@@ -28,6 +29,10 @@ static const char *TAG = "aku";
 // response (the name lives there; WiFi shares the radio) would otherwise hide
 // the scale for the rest of an endless scan. Restarting clears the filter.
 #define SCAN_WINDOW_MS 10000
+// After the fast search: look this long every CONFIG_CS_SCALE_SLOW_SEARCH_EVERY_S.
+// The AKU advertises while awake, so a few seconds finds it (ours, not measured).
+#define SLOW_SCAN_WINDOW_MS 3000
+#define FAST_SEARCH_US ((int64_t)CONFIG_CS_SCALE_FAST_SEARCH_MIN * 60 * 1000000)
 
 // Name prefixes, case-sensitive, as GaggiMate matches them (varia.h:58-61).
 static const char *const NAME_PREFIXES[] = {"AKU MINI SCALE", "VARIA AKU", "Varia AKU", "AKU SCALE"};
@@ -44,6 +49,8 @@ static uint16_t s_notify_handle, s_write_handle, s_cccd_handle;
 static uint8_t s_notify_props;
 static bool s_connecting;
 static char s_pending_name[32];
+static bool s_synced;
+static struct ble_npl_callout s_retry;  // next slow look, or a wake (runs on the host task)
 
 // Rate / interval measurement
 static int64_t s_last_notif_us;
@@ -53,6 +60,7 @@ static int64_t s_rate_window_start_us;
 static uint32_t s_rate_window_count;
 
 static void start_scan(void);
+static void scan_next(void);
 static int gap_event(struct ble_gap_event *event, void *arg);
 
 // ------------------------------------------------------------------ helpers
@@ -64,6 +72,27 @@ static void post(const aku_event_t *ev) {
 }
 
 static void status_changed_locked(void) { s_st.seq++; }
+
+static bool fast_now(void) {
+    portENTER_CRITICAL(&s_lock);
+    bool fast = esp_timer_get_time() < s_st.fast_until_us;
+    portEXIT_CRITICAL(&s_lock);
+    return fast;
+}
+
+static void set_search(aku_search_t m) {
+    portENTER_CRITICAL(&s_lock);
+    aku_search_t prev = (aku_search_t)s_st.search;
+    s_st.search = (uint8_t)m;
+    if (prev != m) status_changed_locked();
+    portEXIT_CRITICAL(&s_lock);
+    if (prev != m) {
+        aku_event_t ev = {.kind = AKU_EV_SEARCH, .t_us = esp_timer_get_time()};
+        ev.search.mode = (uint8_t)m;
+        ev.search.prev = (uint8_t)prev;
+        post(&ev);
+    }
+}
 
 static bool name_matches(const uint8_t *name, uint8_t len) {
     for (size_t i = 0; i < sizeof NAME_PREFIXES / sizeof NAME_PREFIXES[0]; i++) {
@@ -219,6 +248,7 @@ static int on_cccd_written(uint16_t conn, const struct ble_gatt_error *err, stru
     portENTER_CRITICAL(&s_lock);
     s_st.connected = true;
     s_st.connects++;
+    s_st.search = AKU_SEARCH_CONNECTED;
     strlcpy(ev.conn.name, s_st.name, sizeof ev.conn.name);
     s_last_notif_us = 0;
     s_interval_sum_ms = 0;
@@ -344,7 +374,7 @@ static int gap_event(struct ble_gap_event *event, void *arg) {
             return 0;
 
         case BLE_GAP_EVENT_DISC_COMPLETE:
-            if (!s_connecting && s_conn == BLE_HS_CONN_HANDLE_NONE) start_scan();
+            if (!s_connecting && s_conn == BLE_HS_CONN_HANDLE_NONE) scan_next();
             return 0;
 
         case BLE_GAP_EVENT_CONNECT:
@@ -369,7 +399,15 @@ static int gap_event(struct ble_gap_event *event, void *arg) {
             portENTER_CRITICAL(&s_lock);
             bool was = s_st.connected;
             s_st.connected = false;
-            s_st.timer_s = 0;  // no scale, no running timer
+            // No scale: the page shows --:--, --.- and ---% instead of the last values.
+            s_st.timer_s = -1;
+            s_st.battery_pct = -1;
+            s_st.weight_g = 0;
+            s_st.weight_t_us = 0;
+            if (was) {
+                s_st.lost_t_us = ev.t_us;
+                s_st.fast_until_us = ev.t_us + FAST_SEARCH_US;
+            }
             strlcpy(ev.conn.name, s_st.name, sizeof ev.conn.name);
             status_changed_locked();
             portEXIT_CRITICAL(&s_lock);
@@ -390,8 +428,11 @@ static int gap_event(struct ble_gap_event *event, void *arg) {
     }
 }
 
+// One scan window: 10 s while searching fast, 3 s in the slow search.
 static void start_scan(void) {
     if (ble_gap_disc_active()) return;
+    bool fast = fast_now();
+    set_search(fast ? AKU_SEARCH_FAST : AKU_SEARCH_SLOW);
     // Units of 0.625 ms. NimBLE's defaults (0) scan with window == interval,
     // which keeps the shared 2.4 GHz radio on BLE nearly all the time while the
     // scale sleeps: WiFi then crawls (1 s pings, updates and pages time out).
@@ -404,12 +445,36 @@ static void start_scan(void) {
         .passive = 0,   // active: the name can be in the scan response
         .filter_duplicates = 1,
     };
-    int rc = ble_gap_disc(s_own_addr_type, SCAN_WINDOW_MS, &p, gap_event, NULL);
+    int rc = ble_gap_disc(s_own_addr_type, fast ? SCAN_WINDOW_MS : SLOW_SCAN_WINDOW_MS, &p, gap_event, NULL);
     if (rc != 0) {
         ESP_LOGE(TAG, "scan start failed rc=%d", rc);
     } else {
         ESP_LOGD(TAG, "Scanning for AKU...");
     }
+}
+
+// A scan window ended without finding the scale.
+static void scan_next(void) {
+    if (fast_now()) {
+        start_scan();
+    } else if (CONFIG_CS_SCALE_SLOW_SEARCH_EVERY_S == 0) {
+        set_search(AKU_SEARCH_OFF);
+    } else {
+        set_search(AKU_SEARCH_SLOW);
+        int32_t wait_ms = CONFIG_CS_SCALE_SLOW_SEARCH_EVERY_S * 1000 - SLOW_SCAN_WINDOW_MS;
+        if (wait_ms < 100) wait_ms = 100;
+        ble_npl_callout_reset(&s_retry, ble_npl_time_ms_to_ticks32((uint32_t)wait_ms));
+    }
+}
+
+static void on_retry(struct ble_npl_event *ev) {
+    if (!s_synced || s_connecting || s_conn != BLE_HS_CONN_HANDLE_NONE) return;
+    if (ble_gap_disc_active()) {
+        // Woken during a slow look: it ends in <= 3 s and the next one is fast.
+        if (fast_now()) set_search(AKU_SEARCH_FAST);
+        return;
+    }
+    start_scan();
 }
 
 static void on_sync(void) {
@@ -420,6 +485,10 @@ static void on_sync(void) {
         return;
     }
     ESP_LOGI(TAG, "Scanning for AKU (restarts every %d s)...", SCAN_WINDOW_MS / 1000);
+    portENTER_CRITICAL(&s_lock);
+    s_st.fast_until_us = esp_timer_get_time() + FAST_SEARCH_US;
+    portEXIT_CRITICAL(&s_lock);
+    s_synced = true;
     start_scan();
 }
 
@@ -444,10 +513,30 @@ esp_err_t aku_start(QueueHandle_t queue) {
         ESP_LOGE(TAG, "nimble_port_init failed: %s", esp_err_to_name(err));
         return err;
     }
+    ble_npl_callout_init(&s_retry, nimble_port_get_dflt_eventq(), on_retry, NULL);
     ble_hs_cfg.sync_cb = on_sync;
     ble_hs_cfg.reset_cb = on_reset;
     nimble_port_freertos_init(host_task);
     return ESP_OK;
+}
+
+bool aku_wake(void) {
+    portENTER_CRITICAL(&s_lock);
+    bool sped = !s_st.connected && (s_st.search == AKU_SEARCH_SLOW || s_st.search == AKU_SEARCH_OFF);
+    if (!s_st.connected) s_st.fast_until_us = esp_timer_get_time() + FAST_SEARCH_US;
+    portEXIT_CRITICAL(&s_lock);
+    // Start the next window now instead of at the next slow look.
+    if (sped && s_synced) ble_npl_callout_reset(&s_retry, 1);
+    return sped;
+}
+
+const char *aku_search_code(aku_search_t m) {
+    switch (m) {
+        case AKU_SEARCH_CONNECTED: return "connected";
+        case AKU_SEARCH_FAST: return "fast";
+        case AKU_SEARCH_SLOW: return "slow";
+        default: return "off";
+    }
 }
 
 void aku_get_status(aku_status_t *out) {
