@@ -52,6 +52,11 @@ static void retry_cb(TimerHandle_t t) { esp_wifi_connect(); }
 static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_CONNECTED) {
+        // An IPv6 link-local address, so mDNS answers AAAA queries too: macOS
+        // asks for both and waits ~5 s for an AAAA that never comes, which made
+        // every http://<hostname>.local/ load take 5 s. The grinder uses IPv4.
+        esp_netif_create_ip6_linklocal(s_netif);
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_event_sta_disconnected_t *d = data;
         s_connected = false;
@@ -66,6 +71,9 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
         s_connected = true;
         s_retry_ms = 1000;
         ESP_LOGI(TAG, "WiFi connected, IP %s, http://%s.local/", s_ip, CONFIG_CS_HOSTNAME);
+    } else if (base == IP_EVENT && id == IP_EVENT_GOT_IP6) {
+        ip_event_got_ip6_t *e = data;
+        ESP_LOGI(TAG, "IPv6 " IPV6STR, IPV62STR(e->ip6_info.ip));
     }
 }
 
@@ -112,6 +120,7 @@ esp_err_t net_start(void) {
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, on_event, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_event, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_GOT_IP6, on_event, NULL));
 
     s_retry_timer = xTimerCreate("wifi_retry", pdMS_TO_TICKS(1000), pdFALSE, NULL, retry_cb);
 
