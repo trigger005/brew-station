@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brew Station screen mock</title>
+<!-- Mock of the M4 screen UI for a 4" 480x480 touch panel (ESP32-S3 + ST7701).
+     Each .screen is drawn at the panel's real size, 480x480 px. Not code for the
+     board: a reference for the LVGL layout. -->
+<style>
+:root {
+  --bg: #161412; --card: #211e1b; --card2: #2a2622; --text: #f1ede8; --muted: #a39d95;
+  --line: #35312d; --accent: #d39b62; --accent-dim: #5a4029; --ok: #5cc28a; --bad: #ef7a66; --warn: #e2a63b;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: #0c0b0a; color: var(--text); font: 15px/1.4 var(--sans); padding: 28px 16px 48px; }
+.page-head { max-width: 1010px; margin: 0 auto 22px; }
+.page-head h1 { font-size: 20px; margin: 0 0 6px; }
+.page-head p { color: var(--muted); margin: 0; max-width: 760px; }
+.sheet { display: grid; grid-template-columns: repeat(auto-fit, minmax(480px, 480px)); gap: 40px 50px; justify-content: center; }
+figure { margin: 0; }
+figcaption { color: var(--muted); font-size: 14px; margin-top: 12px; max-width: 480px; }
+figcaption b { color: var(--text); font-weight: 600; }
+@media (max-width: 540px) { .sheet { grid-template-columns: 1fr; } .frame { transform: scale(.7); transform-origin: top left; margin-bottom: -144px; } }
+
+/* The panel: 480x480, with a bezel around it for the look only. */
+.frame { width: 500px; padding: 10px; border-radius: 22px; background: #050505; box-shadow: 0 10px 40px rgba(0,0,0,.6); margin-left: -10px; }
+.screen { width: 480px; height: 480px; background: var(--bg); border-radius: 6px; overflow: hidden; position: relative; display: flex; flex-direction: column; }
+
+/* Top bar: 44 px */
+.bar { height: 44px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 650; font-size: 16px; }
+.brand svg { width: 20px; height: 20px; }
+.status { display: flex; align-items: center; gap: 14px; font-size: 13px; color: var(--muted); }
+.status span { display: inline-flex; align-items: center; gap: 5px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+.dot.off { background: var(--bad); } .dot.wait { background: var(--warn); }
+.batt { width: 22px; height: 11px; border: 1.5px solid var(--muted); border-radius: 3px; position: relative; padding: 1px; }
+.batt::after { content: ""; position: absolute; right: -4px; top: 3px; width: 2px; height: 4px; background: var(--muted); border-radius: 0 1px 1px 0; }
+.batt i { display: block; height: 100%; background: var(--ok); border-radius: 1px; }
+.batt.none i { width: 0; }
+
+.body { flex: 1; display: flex; flex-direction: column; padding: 14px 16px 16px; gap: 12px; min-height: 0; }
+
+/* Big numbers */
+.big { font: 600 112px/1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -4px; }
+.big small { font: 500 30px var(--sans); color: var(--muted); letter-spacing: 0; margin-left: 6px; }
+.mid { font: 600 64px/1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -2px; }
+.mid small { font: 500 22px var(--sans); color: var(--muted); letter-spacing: 0; margin-left: 4px; }
+.k { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; font-weight: 600; }
+.center { text-align: center; }
+.muted { color: var(--muted); }
+
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tile { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; }
+.tile .v { font: 600 26px/1.15 var(--mono); font-variant-numeric: tabular-nums; margin-top: 2px; }
+.tile .v small { font: 500 15px var(--sans); color: var(--muted); margin-left: 2px; }
+
+/* Touch targets: 60 px tall at least (about 9 mm on this panel) */
+.btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: auto; }
+.btn { height: 64px; border-radius: 14px; border: 1px solid var(--line); background: var(--card2); color: var(--text); font: 600 19px var(--sans); display: flex; align-items: center; justify-content: center; gap: 8px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #1d1b19; }
+.btn.danger { color: var(--bad); }
+.btn.wide { grid-column: 1 / -1; }
+.btn svg { width: 22px; height: 22px; }
+
+.seg { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 4px; gap: 4px; }
+.seg div { height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-weight: 600; color: var(--muted); }
+.seg .on { background: var(--accent); color: #1d1b19; }
+.seg.off { opacity: .4; }
+
+.hint { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--muted); font-size: 15px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 99px; background: var(--card2); color: var(--muted); }
+.chip.live { color: var(--accent); background: var(--accent-dim); }
+.chip.live .dot { background: var(--accent); animation: pulse 1.2s infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+
+/* Running shot */
+.run-top { display: flex; justify-content: space-between; align-items: flex-end; }
+.progress { height: 14px; border-radius: 7px; background: var(--card2); position: relative; overflow: visible; }
+.progress i { position: absolute; inset: 0 auto 0 0; border-radius: 7px; background: var(--accent); }
+.progress b { position: absolute; top: -5px; bottom: -5px; width: 3px; background: var(--text); border-radius: 2px; }
+.prow { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-top: 6px; }
+.chart { background: var(--card); border: 1px solid var(--line); border-radius: 14px; flex: 1; min-height: 0; position: relative; }
+.chart svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.chart .lab { position: absolute; left: 12px; top: 8px; }
+.chart .flow { position: absolute; right: 12px; top: 8px; text-align: right; }
+.chart .flow .v { font: 600 22px var(--mono); }
+
+/* Result */
+.done { display: flex; flex-direction: column; align-items: center; gap: 6px; padding-top: 6px; }
+.check { width: 64px; height: 64px; border-radius: 50%; background: rgba(92,194,138,.15); display: grid; place-items: center; }
+.check svg { width: 34px; height: 34px; }
+.result { display: flex; gap: 26px; justify-content: center; align-items: baseline; margin-top: 6px; }
+.delta { font-size: 14px; color: var(--muted); text-align: center; }
+.delta b { color: var(--ok); font-weight: 600; }
+.countdown { height: 4px; background: var(--card2); border-radius: 2px; overflow: hidden; }
+.countdown i { display: block; height: 100%; width: 60%; background: var(--muted); }
+
+/* No scale */
+.asleep { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; }
+.asleep .drop { width: 84px; height: 84px; opacity: .9; }
+.asleep h2 { margin: 6px 0 0; font-size: 26px; }
+.asleep p { margin: 0; color: var(--muted); max-width: 360px; }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="logo" viewBox="0 0 64 64">
+    <path fill="var(--accent)" d="M32 8C32 8 17 25 17 35.5a15 15 0 0 0 30 0C47 25 32 8 32 8Z"/>
+    <rect fill="var(--text)" x="12" y="55" width="40" height="4.5" rx="2.25"/>
+  </symbol>
+</svg>
+
+<div class="page-head">
+  <h1>Brew Station: 4" screen mock (480×480)</h1>
+  <p>Four states of one shot, drawn at the panel's real pixel size. Dark theme with the status page's colours and the drop logo. Big numbers to read from a step away; every button is at least 60 px tall (about 9 mm on this panel).</p>
+</div>
+
+<div class="sheet">
+
+<!-- 1. Ready -->
+<figure>
+<div class="frame"><div class="screen">
+  <div class="bar">
+    <div class="brand"><svg><use href="#logo"/></svg>Brew Station</div>
+    <div class="status">
+      <span><span class="dot"></span>Grinder</span>
+      <span><span class="batt"><i style="width:80%"></i></span>80%</span>
+    </div>
+  </div>
+  <div class="body">
+    <div class="center" style="margin-top:6px">
+      <div class="big">0.0<small>g</small></div>
+      <div class="muted" style="margin-top:6px">Varia AKU-MICRO · timer 00:00</div>
+    </div>
+    <div class="tiles">
+      <div class="tile"><div class="k">Recipe</div><div class="v">40.0<small>g</small></div></div>
+      <div class="tile"><div class="k">Last shot</div><div class="v">27.4<small>s</small> 40.2<small>g</small></div></div>
+    </div>
+    <div class="seg"><div class="on">Auto</div><div>Target</div><div>Manual</div></div>
+    <div class="btns">
+      <div class="btn primary">Tare</div>
+      <div class="btn">Timer</div>
+    </div>
+  </div>
+</div></div>
+<figcaption><b>Ready.</b> Live weight, the recipe weight the grinder sent with the last GbS grind, the last result, and the report mode. Press the grinder knob to start; the screen follows by itself.</figcaption>
+</figure>
+
+<!-- 2. Shot running -->
+<figure>
+<div class="frame"><div class="screen">
+  <div class="bar">
+    <div class="brand"><svg><use href="#logo"/></svg>Brew Station</div>
+    <div class="status">
+      <span class="chip live"><span class="dot"></span>Shot running</span>
+    </div>
+  </div>
+  <div class="body">
+    <div class="run-top">
+      <div><div class="k">Time</div><div class="mid">18.4<small>s</small></div></div>
+      <div style="text-align:right"><div class="k">In the cup</div><div class="mid">24.6<small>g</small></div></div>
+    </div>
+    <div>
+      <div class="progress"><i style="width:61.5%"></i><b style="left:calc(100% - 3px)"></b></div>
+      <div class="prow"><span>62 % of 40.0 g</span><span>Auto · ends at end of flow</span></div>
+    </div>
+    <div class="chart">
+      <div class="lab k">Weight · dashed: 40 g</div>
+      <div class="flow"><div class="k">Flow</div><div class="v">1.9 g/s</div></div>
+      <svg viewBox="0 0 448 150" preserveAspectRatio="none">
+        <line x1="0" y1="34" x2="448" y2="34" vector-effect="non-scaling-stroke" stroke="var(--muted)" stroke-opacity=".6" stroke-dasharray="4 5"/>
+        <path d="M0 148 L40 148 L70 147 L95 144 L120 136 L150 124 L180 111 L210 98 L240 86 L262 78 L262 150 L0 150 Z" fill="var(--accent)" opacity=".18"/>
+        <path d="M0 148 L40 148 L70 147 L95 144 L120 136 L150 124 L180 111 L210 98 L240 86 L262 78" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="262" cy="78" r="5" fill="var(--accent)"/>
+      </svg>
+    </div>
+    <div class="btns" style="margin-top:0">
+      <div class="btn">Send now</div>
+      <div class="btn danger">Abort</div>
+    </div>
+  </div>
+</div></div>
+<figcaption><b>Shot running.</b> Time from the knob press (the scale's timer when it agrees), weight in the cup, progress to the recipe weight, and the weight curve with the flow rate. Send now and Abort for when the detector needs help.</figcaption>
+</figure>
+
+<!-- 3. Result sent -->
+<figure>
+<div class="frame"><div class="screen">
+  <div class="bar">
+    <div class="brand"><svg><use href="#logo"/></svg>Brew Station</div>
+    <div class="status">
+      <span><span class="dot"></span>Grinder</span>
+      <span><span class="batt"><i style="width:78%"></i></span>78%</span>
+    </div>
+  </div>
+  <div class="body">
+    <div class="done">
+      <div class="check"><svg viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+      <div style="font-size:20px;font-weight:650">Grinder got the shot</div>
+    </div>
+    <div class="result">
+      <div class="center"><div class="mid">27.4<small>s</small></div><div class="k" style="margin-top:6px">Time</div></div>
+      <div class="center"><div class="mid">40.2<small>g</small></div><div class="k" style="margin-top:6px">Yield</div></div>
+    </div>
+    <div class="delta">Recipe 40.0 g · <b>+0.2 g</b> · 1:2.0 from 20 g<br>End of flow · scale timer</div>
+    <div style="margin-top:auto">
+      <div class="countdown"><i></i></div>
+      <div class="prow"><span>Back to ready in 9 s</span><span>Saved on the board</span></div>
+    </div>
+  </div>
+</div></div>
+<figcaption><b>Result.</b> Shown once a grinder poll has picked the result up (the board waits for that), so "got" here means the grinder really has it. Time and yield large; how the result was made in small print.</figcaption>
+</figure>
+
+<!-- 4. No scale -->
+<figure>
+<div class="frame"><div class="screen">
+  <div class="bar">
+    <div class="brand"><svg><use href="#logo"/></svg>Brew Station</div>
+    <div class="status">
+      <span><span class="dot"></span>Grinder</span>
+      <span><span class="batt none"><i></i></span>---%</span>
+    </div>
+  </div>
+  <div class="body">
+    <div class="asleep">
+      <svg class="drop" viewBox="0 0 64 64"><path fill="none" stroke="var(--muted)" stroke-width="3" stroke-dasharray="5 5" d="M32 8C32 8 17 25 17 35.5a15 15 0 0 0 30 0C47 25 32 8 32 8Z"/><rect fill="var(--muted)" x="12" y="55" width="40" height="4.5" rx="2.25"/></svg>
+      <h2>Scale asleep</h2>
+      <p>Touch the scale to wake it. Looking for Varia AKU every 30 s · last seen 12 min ago.</p>
+    </div>
+    <div class="seg off"><div class="on">Auto</div><div>Target</div><div>Manual</div></div>
+    <div class="btns">
+      <div class="btn primary wide">Connect scale</div>
+    </div>
+  </div>
+</div></div>
+<figcaption><b>No scale.</b> After the 5-minute fast search. Connect scale (or a GbS grind) searches non-stop again; the mode switch is locked until the scale is back, as on the status page.</figcaption>
+</figure>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 64" width="600" height="128">
+  <style>.a{fill:#8a5a2b}.t{fill:#1d1b19}@media (prefers-color-scheme:dark){.a{fill:#d39b62}.t{fill:#f1ede8}}</style>
+  <path d="M32 8C32 8 17 25 17 35.5a15 15 0 0 0 30 0C47 25 32 8 32 8Z" class="a"/>
+  <rect x="12" y="55" width="40" height="4.5" rx="2.25" class="t"/>
+  <text x="78" y="43" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="30" font-weight="650" letter-spacing="-0.5" class="t">brew<tspan dx="5" class="a" font-weight="400">station</tspan></text>
+</svg>
