@@ -42,8 +42,8 @@ Open `http://brew-station.local/` (or the board's IP). It shows the live weight,
   </tr>
   <tr>
     <td align="center"><img src="docs/screenshots/manual.png" width="220" alt="Brewing in Manual mode: time and weight inputs"><br><sub>Manual mode</sub></td>
-    <td align="center"><img src="docs/screenshots/diagnostics.png" width="220" alt="Diagnostics: events, scale link, grinder requests, firmware"><br><sub>Diagnostics</sub></td>
-    <td></td>
+    <td align="center"><img src="docs/screenshots/diagnostics.png" width="220" alt="Diagnostics: results the grinder got, events, scale link, grinder requests, firmware"><br><sub>Diagnostics</sub></td>
+    <td align="center"><img src="docs/screenshots/no-scale.png" width="220" alt="No scale: search state, last seen, Connect scale button"><br><sub>Scale asleep, Connect scale</sub></td>
   </tr>
 </table>
 
