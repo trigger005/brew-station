@@ -36,14 +36,14 @@ Open `http://brew-station.local/` (or the board's IP). It shows the live weight,
 
 <table>
   <tr>
-    <td align="center"><img src="docs/screenshots/ready.png" width="220" alt="Ready: report mode switch, last result sent to the grinder, recipe weight"><br><sub>Ready, waiting for the knob press</sub></td>
-    <td align="center"><img src="docs/screenshots/brewing-target.png" width="220" alt="Brewing in Target mode: live weight against the 36 g target"><br><sub>Brewing, Target mode</sub></td>
-    <td align="center"><img src="docs/screenshots/brewing-auto.png" width="220" alt="Brewing in Auto mode: live weight, sends when the flow stops"><br><sub>Brewing, Auto mode</sub></td>
+    <td align="center"><img src="docs/screenshots/ready-v2.png" width="220" alt="Ready: report mode switch, last result sent to the grinder, recipe weight"><br><sub>Ready, waiting for the knob press</sub></td>
+    <td align="center"><img src="docs/screenshots/brewing-target-v2.png" width="220" alt="Brewing in Target mode: live weight against the 36 g target"><br><sub>Brewing, Target mode</sub></td>
+    <td align="center"><img src="docs/screenshots/brewing-auto-v2.png" width="220" alt="Brewing in Auto mode: live weight, sends when the flow stops"><br><sub>Brewing, Auto mode</sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/screenshots/manual.png" width="220" alt="Brewing in Manual mode: time and weight inputs"><br><sub>Manual mode</sub></td>
-    <td align="center"><img src="docs/screenshots/diagnostics.png" width="220" alt="Diagnostics: results the grinder got, events, scale link, grinder requests, firmware"><br><sub>Diagnostics</sub></td>
-    <td align="center"><img src="docs/screenshots/no-scale.png" width="220" alt="No scale: search state, last seen, Connect scale button"><br><sub>Scale asleep, Connect scale</sub></td>
+    <td align="center"><img src="docs/screenshots/manual-v2.png" width="220" alt="Brewing in Manual mode: time and weight inputs"><br><sub>Manual mode</sub></td>
+    <td align="center"><img src="docs/screenshots/diagnostics-v2.png" width="220" alt="Diagnostics: results the grinder got, events, scale link, grinder requests, firmware"><br><sub>Diagnostics</sub></td>
+    <td align="center"><img src="docs/screenshots/no-scale-v2.png" width="220" alt="No scale: search state, last seen, Connect scale button"><br><sub>Scale asleep, Connect scale</sub></td>
   </tr>
 </table>
 
