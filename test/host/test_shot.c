@@ -10,6 +10,7 @@
 
 #include "shot.h"
 #include "shot_decide.h"
+#include "scale_clock.h"
 
 static int failures = 0;
 static int checks = 0;
@@ -460,6 +461,50 @@ static void target_end_to_end(void) {
     free(rs.r);
 }
 
+// ------------------------------------------------------------------ scale_clock (ours)
+
+// A timer started at 1000 ms, one frame per second 120 ms after each tick.
+static void scale_clock_follows_the_display(void) {
+    scale_clock_t c;
+    scale_clock_reset(&c);
+    uint32_t s = 99;
+    CHECK(!scale_clock_at(&c, 5000, 2500, &s));
+    scale_clock_frame(&c, 1100, 0);  // reset frame: not started yet
+    CHECK(!scale_clock_at(&c, 1500, 2500, &s));
+    for (uint32_t n = 1; n <= 25; n++) scale_clock_frame(&c, 1000 + n * 1000 + 120, n);
+    // 21.5 s after the start the scale showed 21.
+    CHECK(scale_clock_at(&c, 1000 + 21500, 2500, &s) && s == 21);
+    // Long after the last frame (timer stopped, scale gone): nothing.
+    CHECK(!scale_clock_at(&c, 1000 + 25120 + 3000, 2500, &s));
+}
+
+// Frames more often than ticks pin the start down; a reset starts over.
+static void scale_clock_resets(void) {
+    scale_clock_t c;
+    scale_clock_reset(&c);
+    uint32_t s = 0;
+    // Started at 400 ms; frames every 300 ms, 80 ms late.
+    for (int64_t t = 480; t < 10000; t += 300) scale_clock_frame(&c, t, (uint32_t)((t - 480) / 1000));
+    CHECK(c.valid && c.hi_ms - c.lo_ms <= 300);
+    CHECK(scale_clock_at(&c, 400 + 7600, 2500, &s) && s == 7);
+    // Previous shot's value, then a reset and a new start at 20000.
+    scale_clock_frame(&c, 15000, 0);
+    CHECK(!c.valid);
+    for (uint32_t n = 1; n <= 12; n++) scale_clock_frame(&c, 20000 + n * 1000 + 100, n);
+    CHECK(scale_clock_at(&c, 20000 + 12050, 2500, &s) && s == 11);
+}
+
+// A stale frame from before a restart can't wedge it: the newest wins.
+static void scale_clock_inconsistent_frames(void) {
+    scale_clock_t c;
+    scale_clock_reset(&c);
+    uint32_t s = 0;
+    scale_clock_frame(&c, 5000, 4);   // start in (0, 1000]
+    scale_clock_frame(&c, 9000, 5);   // start in (3000, 4000]: contradicts
+    CHECK(c.valid && c.lo_ms == 3000 && c.hi_ms == 4000);
+    CHECK(scale_clock_at(&c, 9500, 2500, &s) && s == 5);
+}
+
 int main(void) {
     D = malloc(sizeof *D);
     struct {
@@ -485,6 +530,9 @@ int main(void) {
         {"decide_choke_in_target", decide_choke_in_target},
         {"monotonic_times", monotonic_times},
         {"target_end_to_end", target_end_to_end},
+        {"scale_clock_follows_the_display", scale_clock_follows_the_display},
+        {"scale_clock_resets", scale_clock_resets},
+        {"scale_clock_inconsistent_frames", scale_clock_inconsistent_frames},
     };
     for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) {
         int before = failures;

@@ -33,7 +33,8 @@ target_include_directories(test_machine PRIVATE ${ROOT}/components/machine/inclu
 target_link_libraries(test_machine PRIVATE cjson m)
 add_test(NAME machine COMMAND test_machine)
 
-add_executable(test_shot test_shot.c ${ROOT}/components/shot/shot.c ${ROOT}/components/shot/shot_decide.c)
+add_executable(test_shot test_shot.c ${ROOT}/components/shot/shot.c ${ROOT}/components/shot/shot_decide.c
+    ${ROOT}/components/shot/scale_clock.c)
 target_include_directories(test_shot PRIVATE ${ROOT}/components/shot/include)
 target_link_libraries(test_shot PRIVATE m)
 add_test(NAME shot COMMAND test_shot)
