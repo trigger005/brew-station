@@ -161,6 +161,7 @@ static void abort_shot(machine_t *m, int64_t now_ms, abort_cause_t cause) {
     m->result.time_ms = running;
     m->result.weight_g = 0.0;
     m->aborted = true;
+    m->finishing_seen = false;
     machine_event_t *e = push(m, now_ms, MEV_SHOT_ABORTED);
     e->aborted.cause = cause;
     e->aborted.running_ms = running;
@@ -171,7 +172,8 @@ void machine_tick(machine_t *m, int64_t now_ms) {
     if (m->phase == MACHINE_RUNNING) {
         if (m->config.shot_window_ms && now_ms - m->since_ms >= (int64_t)m->config.shot_window_ms)
             abort_shot(m, now_ms, ABORT_SHOT_TIMED_OUT);
-    } else if (m->phase == MACHINE_FINISHING && now_ms >= m->until_ms) {
+    } else if (m->phase == MACHINE_FINISHING && now_ms >= m->until_ms &&
+               (m->finishing_seen || now_ms >= m->until_ms + (int64_t)MACHINE_MAX_UNSEEN_HOLD_MS)) {
         m->phase = MACHINE_READY;
         push(m, now_ms, MEV_SHOT_FINISHED);
     }
@@ -224,6 +226,7 @@ machine_err_t machine_report_shot(machine_t *m, int64_t now_ms, shot_result_t r)
     m->until_ms = now_ms + m->config.finishing_hold_ms;
     m->result = r;
     m->aborted = false;
+    m->finishing_seen = false;
     m->last_shot = r;
     m->has_last_shot = true;
     machine_event_t *e = push(m, now_ms, MEV_SHOT_REPORTED);
@@ -266,6 +269,11 @@ void machine_mako(machine_t *m, int64_t now_ms, mako_state_t *s) {
             s->flow_meter_volume_ml = m->result.weight_g;
             break;
     }
+}
+
+void machine_poll(machine_t *m, int64_t now_ms, mako_state_t *s) {
+    machine_mako(m, now_ms, s);
+    if (m->phase == MACHINE_FINISHING) m->finishing_seen = true;
 }
 
 size_t machine_events_after(const machine_t *m, uint32_t after, machine_event_t *out, size_t max) {

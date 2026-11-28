@@ -89,7 +89,7 @@ static grinder_out_t grinder_observe(grinder_t *g, const mako_state_t *s) {
 
 static grinder_out_t observe(grinder_t *g, machine_t *m, int64_t t) {
     mako_state_t s;
-    machine_mako(m, t, &s);
+    machine_poll(m, t, &s);
     return grinder_observe(g, &s);
 }
 
@@ -320,7 +320,35 @@ static void test_shortest_hold_is_always_taken(void) {
             if (!taken(1000, phase, gaps, 5, first)) missed++;
         }
     }
-    CHECK(missed > 0);
+    // machine.rs checks a 1 s hold misses some; with Finishing held until a
+    // poll sees it (MACHINE_MAX_UNSEEN_HOLD_MS), none is missed.
+    CHECK(missed == 0);
+}
+
+// Ours: a poll gap longer than the hold doesn't lose the result; with no
+// poll at all, Finishing still ends after MACHINE_MAX_UNSEEN_HOLD_MS.
+static void test_finishing_waits_for_a_poll(void) {
+    int64_t t0 = 1000000;
+    machine_t m = new_machine(0);
+    grinder_t g = grinder_new();
+    observe(&g, &m, t0);
+    grinder_request_start(&g);
+    machine_on_start_request(&m, t0, true, 9);
+    observe(&g, &m, t0 + POLL_MS);
+    machine_report_shot(&m, t0 + 25000, shot(25000, 40.0));
+    // Polls stop for 15 s (hold is 6 s).
+    CHECK(machine_phase(&m, t0 + 40000) == MACHINE_FINISHING);
+    grinder_out_t o = observe(&g, &m, t0 + 40000);
+    CHECK(o.accepted && o.time_ms == 25000);
+    CHECK(machine_phase(&m, t0 + 40001) == MACHINE_READY);
+
+    machine_t m2 = new_machine(0);
+    machine_on_start_request(&m2, t0, true, 9);
+    machine_report_shot(&m2, t0 + 25000, shot(25000, 40.0));
+    mako_state_t s;
+    machine_mako(&m2, t0 + 25000 + 7000, &s);  // the page looking doesn't count
+    CHECK(machine_phase(&m2, t0 + 25000 + 7000) == MACHINE_FINISHING);
+    CHECK(machine_phase(&m2, t0 + 25000 + 6000 + MACHINE_MAX_UNSEEN_HOLD_MS) == MACHINE_READY);
 }
 
 static void test_hold_is_clamped(void) {
@@ -453,6 +481,7 @@ int main(void) {
         {"human_shot_is_accepted_by_the_grinder_model", test_human_shot_is_accepted_by_the_grinder_model},
         {"shortest_hold_is_always_taken", test_shortest_hold_is_always_taken},
         {"hold_is_clamped", test_hold_is_clamped},
+        {"finishing_waits_for_a_poll", test_finishing_waits_for_a_poll},
         {"shot_without_weight_gets_recipe_weight", test_shot_without_weight_gets_recipe_weight},
         {"manual_start_counts_as_flush", test_manual_start_counts_as_flush},
         {"abort_and_timeout", test_abort_and_timeout},

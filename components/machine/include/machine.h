@@ -30,6 +30,10 @@ extern "C" {
 #define MACHINE_MAX_FINISHING_HOLD_MS 60000u
 // machine.rs:83-84 MachineConfig::default
 #define MACHINE_DEFAULT_FINISHING_HOLD_MS 6000u
+// Ours, not in machine.rs: Finishing also lasts until a grinder poll has seen
+// it, so a gap in the polls (WiFi) longer than the hold can't lose the
+// result. Bounded, in case the grinder went away.
+#define MACHINE_MAX_UNSEEN_HOLD_MS 60000u
 #define MACHINE_DEFAULT_SHOT_WINDOW_MS 180000u
 // mod.rs:65,69: the E64 WS adjusts from shots over 10 s, up to 80 s
 #define MACHINE_MIN_EXTRACTION_TIME_MS 10000u
@@ -204,6 +208,7 @@ typedef struct {
     int64_t until_ms;           // Finishing
     shot_result_t result;       // Finishing
     bool aborted;               // Finishing
+    bool finishing_seen;        // Finishing: a grinder poll got it (machine_poll)
 
     bool has_range;  // machine.rs:433: set by the first knob press
 
@@ -249,8 +254,10 @@ bool machine_recipe_weight(const machine_t *m, double *out_g);
 // Whether the E64 WS adjusts from a shot of time_ms (machine.rs:131-151).
 bool machine_e64_in_range(uint32_t time_ms);
 
-// The typed reply to GET /api/v2/mako at now_ms.
+// The typed reply to GET /api/v2/mako at now_ms, for a look (the page).
 void machine_mako(machine_t *m, int64_t now_ms, mako_state_t *out);
+// The same for the grinder's own poll: marks Finishing as seen.
+void machine_poll(machine_t *m, int64_t now_ms, mako_state_t *out);
 
 // Events with seq > after, oldest first; returns how many were copied.
 size_t machine_events_after(const machine_t *m, uint32_t after, machine_event_t *out, size_t max);
