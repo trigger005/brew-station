@@ -16,6 +16,7 @@
 
 #include "aku.h"
 #include "autoshot.h"
+#include "results.h"
 #include "board.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -62,7 +63,10 @@ static void aku_event_task(void *arg) {
                         printf(" battery %u\n", ev.frame.battery_pct);
                         web_log("Battery %u%%", ev.frame.battery_pct);
                         break;
-                    case AKU_TYPE_TIMER: printf(" timer %u\n", ev.frame.timer_s); break;
+                    case AKU_TYPE_TIMER:
+                        printf(" timer %u\n", ev.frame.timer_s);
+                        autoshot_scale_timer(ev.t_us / 1000, ev.frame.timer_s);
+                        break;
                     default: {
                         char hex[3 * sizeof ev.frame.raw + 1] = "";
                         for (int i = 0; i < ev.frame.raw_len; i++)
@@ -89,6 +93,21 @@ static void aku_event_task(void *arg) {
                 web_log("Scale disconnected (reason 0x%x)", ev.conn.reason);
                 board_led_set(0, 0, 24);
                 break;
+
+            case AKU_EV_SEARCH:
+                printf("AKU ");
+                print_ts(ev.t_us);
+                printf(" search %s\n", aku_search_code((aku_search_t)ev.search.mode));
+                if (ev.search.mode == AKU_SEARCH_SLOW)
+                    web_log("Scale not found for %d min: looking for 3 s every %d s", CONFIG_CS_SCALE_FAST_SEARCH_MIN,
+                            CONFIG_CS_SCALE_SLOW_SEARCH_EVERY_S);
+                else if (ev.search.mode == AKU_SEARCH_OFF)
+                    web_log("Scale not found for %d min: stopped looking (a grind, the knob or Connect scale starts again)",
+                            CONFIG_CS_SCALE_FAST_SEARCH_MIN);
+                else if (ev.search.mode == AKU_SEARCH_FAST &&
+                         (ev.search.prev == AKU_SEARCH_SLOW || ev.search.prev == AKU_SEARCH_OFF))
+                    web_log("Looking for the scale non-stop again");
+                break;
         }
     }
 }
@@ -111,6 +130,8 @@ static void machine_event_task(void *arg) {
         print_ts(ev.at_ms * 1000);
         switch (ev.kind) {
             case MEV_GRINDER_GRIND_FINISHED:
+                // A shot is next: the scale should be awake by the time it's needed.
+                if (aku_wake()) web_log("GbS grind: looking for the scale");
                 if (ev.grind.has_target) {
                     printf(" grind_finished target %.2f g filter \"%s\"\n", ev.grind.target_weight_g, ev.grind.filter);
                     web_log("Grinder: GbS grind done, target %.1f g", ev.grind.target_weight_g);
@@ -122,6 +143,7 @@ static void machine_event_task(void *arg) {
             case MEV_GRINDER_SHOT_REQUESTED:
                 printf(" shot_requested script %lld\n", ev.requested.has_script_id ? (long long)ev.requested.script_id : -1LL);
                 web_log("Grinder: knob pressed, start the shot");
+                if (aku_wake()) web_log("Knob pressed: looking for the scale");
             {
                 bool tared = false;
 #if CONFIG_CS_KNOB_SCALE_ACTIONS
@@ -208,6 +230,7 @@ void app_main(void) {
     s_aku_queue = xQueueCreate(64, sizeof(aku_event_t));
     xTaskCreate(aku_event_task, "aku_events", 8192, NULL, 5, NULL);  // reports shots: web_log, printf %f
     xTaskCreate(button_task, "button", 3072, NULL, 3, NULL);
+    results_start();
     autoshot_start();
     s_machine_queue = xQueueCreate(16, sizeof(machine_event_t));
     xTaskCreate(machine_event_task, "machine_events", 6144, NULL, 5, NULL);
@@ -217,6 +240,7 @@ void app_main(void) {
     }
     // After web_start, before grinder_api: exact routes must come before its "/*".
     ota_start(web_httpd());
+    grinder_api_set_logger(web_log);
     grinder_api_start(web_httpd(), s_machine_queue);
     ESP_ERROR_CHECK(aku_start(s_aku_queue));
     // A new firmware from OTA stays only if WiFi and the server come up.

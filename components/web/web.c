@@ -10,6 +10,7 @@
 #include "aku.h"
 #include "build_info.h"
 #include "esp_app_desc.h"
+#include "esp_heap_caps.h"
 #include "esp_system.h"
 #include "autoshot.h"
 #include "esp_http_server.h"
@@ -18,6 +19,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "net.h"
+#include "results.h"
 #include "grinder_api.h"
 
 static const char *TAG = "web";
@@ -31,6 +33,18 @@ extern const uint8_t index_html_end[] asm("_binary_index_html_end");
 #define STATUS_JSON_MAX 2048
 
 static httpd_handle_t s_server;
+
+// The last log lines, so a page opened later (or after a missed shot) still
+// shows them: GET /api/log. RAM only, gone after a restart.
+#define LOG_LINES 80
+#define LOG_LINE_MAX 160
+typedef struct {
+    int64_t uptime_ms;
+    char line[LOG_LINE_MAX];
+} log_entry_t;
+static log_entry_t *s_ring;  // PSRAM, web_start
+static uint32_t s_ring_n;    // lines ever written
+static portMUX_TYPE s_ring_mux = portMUX_INITIALIZER_UNLOCKED;
 
 // ------------------------------------------------------------------ JSON
 
@@ -75,10 +89,11 @@ static int machine_json(char *buf, size_t size) {
 static int auto_json(char *buf, size_t size) {
     autoshot_status_t a;
     autoshot_get_status(&a);
-    char last[96] = "null", target[24] = "null";
+    char last[128] = "null", target[24] = "null";
     if (a.has_last)
-        snprintf(last, sizeof last, "{\"time_ms\":%lu,\"weight_g\":%.2f,\"by\":\"%s\"}",
-                 (unsigned long)a.last_time_ms, a.last_grams, report_mode_code(a.last_by));
+        snprintf(last, sizeof last, "{\"time_ms\":%lu,\"weight_g\":%.2f,\"by\":\"%s\",\"time_from\":\"%s\"}",
+                 (unsigned long)a.last_time_ms, a.last_grams, report_mode_code(a.last_by),
+                 a.last_from_scale ? "scale" : "board");
     if (a.armed && a.watching == REPORT_TARGET) snprintf(target, sizeof target, "%.2f", a.target_g);
     return snprintf(buf, size,
                     "{\"mode\":\"%s\",\"watching\":\"%s\",\"target_g\":%s,\"timing_mode\":%d,\"armed\":%s,"
@@ -109,12 +124,14 @@ static int status_json(char *buf, size_t size) {
     aku_get_status(&s);
     int64_t now = esp_timer_get_time();
     long long age_ms = s.weight_t_us ? (now - s.weight_t_us) / 1000 : -1;
+    long long lost_ms = s.lost_t_us && !s.connected ? (now - s.lost_t_us) / 1000 : -1;
+    long long fast_left_ms = s.search == AKU_SEARCH_FAST && s.fast_until_us > now ? (s.fast_until_us - now) / 1000 : 0;
     char machine[768];
     machine_json(machine, sizeof machine);
     char fw[160];
     snprintf(fw, sizeof fw, "{\"version\":\"%.32s\",\"build\":%d,\"built\":\"%s\",\"reset\":\"%s\"}",
              esp_app_get_description()->version, BUILD_NUMBER, BUILD_TIME, reset_text());
-    char autos[256];
+    char autos[320];
     auto_json(autos, sizeof autos);
     // From the BLE advertisement: escaped, a quote in it would break the JSON.
     char name[72], addr[40];
@@ -124,6 +141,7 @@ static int status_json(char *buf, size_t size) {
         buf, size,
         "{\"t\":\"status\",\"uptime_ms\":%lld,"
         "\"scale\":{\"connected\":%s,\"name\":\"%s\",\"addr\":\"%s\",\"rssi\":%d,"
+        "\"search\":\"%s\",\"fast_left_ms\":%lld,\"lost_ms\":%lld,"
         "\"weight_g\":%.2f,\"weight_age_ms\":%lld,\"battery_pct\":%d,\"timer_s\":%d,"
         "\"rate_hz\":%.1f,\"notif_ms\":{\"min\":%lu,\"avg\":%lu,\"max\":%lu},"
         "\"notifications\":%lu,\"weights_per_notif_max\":%lu,\"connects\":%lu,"
@@ -131,6 +149,7 @@ static int status_json(char *buf, size_t size) {
         "\"garbage\":%lu,\"unknown\":%lu}},"
         "\"wifi\":{\"ip\":\"%s\",\"rssi\":%d,\"host\":\"%s\"},\"machine\":%s,\"auto\":%s,\"fw\":%s}",
         (long long)(now / 1000), s.connected ? "true" : "false", name, addr, s.rssi,
+        aku_search_code((aku_search_t)s.search), fast_left_ms, lost_ms,
         (double)s.weight_g, age_ms, s.battery_pct, s.timer_s, (double)s.weight_rate_hz,
         (unsigned long)s.notif_interval_min_ms, (unsigned long)s.notif_interval_avg_ms,
         (unsigned long)s.notif_interval_max_ms, (unsigned long)s.notifications,
@@ -197,16 +216,25 @@ static void push_task(void *arg) {
 }
 
 void web_log(const char *fmt, ...) {
-    char line[160];
+    char line[LOG_LINE_MAX];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
+    int64_t up = esp_timer_get_time() / 1000;
+    printf("LOG %lld %s\n", (long long)up, line);
+    if (s_ring) {
+        portENTER_CRITICAL(&s_ring_mux);
+        log_entry_t *e = &s_ring[s_ring_n % LOG_LINES];
+        e->uptime_ms = up;
+        memcpy(e->line, line, sizeof line);
+        s_ring_n++;
+        portEXIT_CRITICAL(&s_ring_mux);
+    }
 
     // JSON-escape quotes and backslashes; drop control characters.
     char msg[384];
-    int n = snprintf(msg, sizeof msg, "{\"t\":\"log\",\"uptime_ms\":%lld,\"msg\":\"",
-                     (long long)(esp_timer_get_time() / 1000));
+    int n = snprintf(msg, sizeof msg, "{\"t\":\"log\",\"uptime_ms\":%lld,\"msg\":\"", (long long)up);
     for (const char *p = line; *p && n < (int)sizeof msg - 4; p++) {
         if (*p == '"' || *p == '\\') msg[n++] = '\\';
         if ((unsigned char)*p >= 0x20) msg[n++] = *p;
@@ -232,8 +260,60 @@ static esp_err_t h_status(httpd_req_t *req) {
     return httpd_resp_sendstr(req, buf);
 }
 
+// {"uptime_ms":..,"log":[{"uptime_ms":..,"msg":".."},...]}, oldest first.
+static esp_err_t h_log(httpd_req_t *req) {
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    char head[48];
+    snprintf(head, sizeof head, "{\"uptime_ms\":%lld,\"log\":[", (long long)(esp_timer_get_time() / 1000));
+    httpd_resp_send_chunk(req, head, HTTPD_RESP_USE_STRLEN);
+    if (s_ring) {
+        portENTER_CRITICAL(&s_ring_mux);
+        uint32_t end = s_ring_n;
+        portEXIT_CRITICAL(&s_ring_mux);
+        uint32_t start = end > LOG_LINES ? end - LOG_LINES : 0;
+        for (uint32_t i = start; i < end; i++) {
+            log_entry_t e = {0};
+            portENTER_CRITICAL(&s_ring_mux);
+            bool gone = s_ring_n - i > LOG_LINES;  // overwritten meanwhile
+            if (!gone) e = s_ring[i % LOG_LINES];
+            portEXIT_CRITICAL(&s_ring_mux);
+            if (gone) continue;
+            e.line[LOG_LINE_MAX - 1] = 0;
+            char text[2 * LOG_LINE_MAX], item[2 * LOG_LINE_MAX + 48];
+            json_text(e.line, text, sizeof text);
+            snprintf(item, sizeof item, "%s{\"uptime_ms\":%lld,\"msg\":\"%s\"}", i > start ? "," : "",
+                     (long long)e.uptime_ms, text);
+            if (httpd_resp_send_chunk(req, item, HTTPD_RESP_USE_STRLEN) != ESP_OK) return ESP_FAIL;
+        }
+    }
+    httpd_resp_send_chunk(req, "]}", 2);
+    return httpd_resp_send_chunk(req, NULL, 0);
+}
+
+// The results the grinder got, saved in flash (results.h), newest first.
+static esp_err_t h_results(httpd_req_t *req) {
+    result_entry_t r[RESULTS_MAX];
+    int n = results_get(r, RESULTS_MAX);
+    static char buf[160 + RESULTS_MAX * 128];  // httpd runs one handler at a time
+    int len = snprintf(buf, sizeof buf, "{\"boot\":%lu,\"uptime_s\":%lld,\"results\":[", (unsigned long)results_boot(),
+                       (long long)(esp_timer_get_time() / 1000000));
+    for (int i = 0; i < n && len < (int)sizeof buf; i++)
+        len += snprintf(buf + len, sizeof buf - len,
+                        "%s{\"boot\":%lu,\"uptime_s\":%lu,\"time_ms\":%lu,\"weight_g\":%.1f,\"kind\":\"%s\",\"src\":\"%s\"}",
+                        i ? "," : "", (unsigned long)r[i].boot, (unsigned long)r[i].uptime_s, (unsigned long)r[i].time_ms,
+                        (double)r[i].weight_g, result_kind_code(r[i].kind), result_src_code(r[i].src));
+    if (len < (int)sizeof buf) snprintf(buf + len, sizeof buf - len, "]}");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_sendstr(req, buf);
+}
+
 static esp_err_t h_ws(httpd_req_t *req) {
-    if (req->method == HTTP_GET) return ESP_OK;  // handshake
+    if (req->method == HTTP_GET) {  // handshake: someone opened the page
+        if (aku_wake()) web_log("Page opened: looking for the scale");
+        return ESP_OK;
+    }
     // Drain anything the page sends; commands go through the REST routes.
     httpd_ws_frame_t f = {0};
     esp_err_t err = httpd_ws_recv_frame(req, &f, 0);
@@ -282,12 +362,17 @@ static bool cross_site(httpd_req_t *req) {
             return reply_json(req, "403 Forbidden", "{\"error\":\"not from another site\",\"code\":\"cross_site\"}"); \
     } while (0)
 
-// POST /api/scale/cmd?c=tare|start|stop|reset
+// POST /api/scale/cmd?c=tare|start|stop|reset|connect
 static esp_err_t h_cmd(httpd_req_t *req) {
     REFUSE_CROSS_SITE(req);
     char c[16] = "";
     query_value(req, "c", c, sizeof c);
 
+    if (!strcmp(c, "connect")) {  // Connect scale: search non-stop again
+        aku_wake();
+        web_log("Connect scale: looking for the scale");
+        return reply_json(req, "200 OK", "{}");
+    }
     aku_cmd_t cmd;
     if (!strcmp(c, "tare")) cmd = AKU_CMD_TARE;
     else if (!strcmp(c, "start")) cmd = AKU_CMD_TIMER_START;
@@ -330,6 +415,7 @@ static esp_err_t h_shot_report(httpd_req_t *req) {
         if (*end || !(w >= 0.0 && w < 10000.0))
             return reply_json(req, "400 Bad Request", "{\"error\":\"bad weight_g\",\"code\":\"bad_weight\"}");
     }
+    results_set_source(RESULT_SRC_HAND);
     machine_err_t e = grinder_api_report_shot((uint32_t)(t * 1000.0 + 0.5), w);
     if (e != MACHINE_OK) return machine_error(req, e);
     return reply_json(req, "200 OK", "{}");
@@ -365,11 +451,13 @@ static esp_err_t h_shot_abort(httpd_req_t *req) {
 // ------------------------------------------------------------------ start
 
 esp_err_t web_start(void) {
+    s_ring = heap_caps_calloc(LOG_LINES, sizeof *s_ring, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_ring) ESP_LOGW(TAG, "No memory for the log history");
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.server_port = 80;
     cfg.max_open_sockets = 7;
     cfg.lru_purge_enable = true;
-    cfg.max_uri_handlers = 12;
+    cfg.max_uri_handlers = 14;
     // Exact routes here; grinder_api adds "/*" last for everything else.
     cfg.uri_match_fn = httpd_uri_match_wildcard;
     cfg.stack_size = 6144;
@@ -388,6 +476,8 @@ esp_err_t web_start(void) {
     const httpd_uri_t routes[] = {
         {.uri = "/", .method = HTTP_GET, .handler = h_index},
         {.uri = "/api/scale", .method = HTTP_GET, .handler = h_status},
+        {.uri = "/api/log", .method = HTTP_GET, .handler = h_log},
+        {.uri = "/api/results", .method = HTTP_GET, .handler = h_results},
         {.uri = "/api/scale/cmd", .method = HTTP_POST, .handler = h_cmd},
         {.uri = "/api/shot/report", .method = HTTP_POST, .handler = h_shot_report},
         {.uri = "/api/shot/abort", .method = HTTP_POST, .handler = h_shot_abort},

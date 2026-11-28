@@ -1,3 +1,5 @@
+<p><img src="docs/logo/logo.svg" alt="" width="300"></p>
+
 # Brew Station
 
 Grind-by-Sync for a **Mahlkönig E64 WS** with a **Varia AKU** Bluetooth scale, on an ESP32-S3. No cloud, no Sync Scale.
@@ -8,7 +10,7 @@ The E64 WS adjusts its grind size from the time and weight of each shot. It norm
 
 ## What it does
 
-1. **Reads the AKU over Bluetooth LE** in real time: weight, battery, timer, tare and timer commands, and reconnects by itself when the scale sleeps and wakes.
+1. **Reads the AKU over Bluetooth LE** in real time: weight, battery, timer, tare and timer commands, and reconnects by itself when the scale sleeps and wakes. After a few minutes without the scale it looks less often to leave the radio to WiFi; a GbS grind, a knob press, opening the page or **Connect scale** makes it search non-stop again.
 2. **Acts as the espresso machine** the E64 WS syncs with over plain HTTP on port 80 (the grinder's "Machine To Machine" setting).
 3. **Finds the shot in the weight** and reports the extraction time and the beverage weight when the grinder asks, so it can adjust.
 
@@ -30,7 +32,7 @@ The grinder ignores shots of 10 s or less and over 80 s, as it does with a real 
 
 ### Status page
 
-Open `http://brew-station.local/` (or the board's IP). It shows the live weight, timer and battery, a switch for the report mode, the shot as it runs (with *Send now* and *Abort shot*), what was last sent to the grinder, and a Diagnostics section.
+Open `http://brew-station.local/` (or the board's IP). It shows the live weight, timer and battery, a switch for the report mode, the shot as it runs (with *Send now* and *Abort shot*), what was last sent to the grinder, and a Diagnostics section. Diagnostics lists the last 12 results the grinder actually got (saved in flash, kept through updates and power cuts) and the recent events, including what each grinder poll saw.
 
 <table>
   <tr>
@@ -93,7 +95,8 @@ A new firmware that can't get WiFi up within 120 s rolls back by itself. Updates
 | Fixed IP, netmask, gateway, DNS | DHCP |
 | Reboot after WiFi has been down for | 60 s |
 | OTA token | empty (updates over WiFi off) |
-| Finishing hold (how long a result stays up for the grinder) | 6 s (3–60) |
+| Finishing hold (how long a result stays up for the grinder) | 15 s (3–60); also held until a grinder poll has picked the result up |
+| Scale search after the scale goes away | non-stop for 5 min, then 3 s every 30 s (0 = stop until woken) |
 | Shot window (abort a shot with no result after) | 180 s |
 | Tare and restart the scale timer on the knob press | on |
 | Report mode before one is picked on the page | Auto |

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Brew Station</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cstyle%3E.a%7Bfill:%238a5a2b%7D.t%7Bfill:%231d1b19%7D@media (prefers-color-scheme:dark)%7B.a%7Bfill:%23d39b62%7D.t%7Bfill:%23f1ede8%7D%7D%3C/style%3E%3Cpath class='a' d='M32 8C32 8 17 25 17 35.5a15 15 0 0 0 30 0C47 25 32 8 32 8Z'/%3E%3Crect class='t' x='12' y='55' width='40' height='4.5' rx='2.25'/%3E%3C/svg%3E">
 <style>
 :root {
   --bg: #f6f5f3; --card: #ffffff; --text: #1d1b19; --muted: #6f6a64; --line: #e4e0db;
@@ -23,7 +24,10 @@ body {
 }
 main { max-width: 480px; margin: 0 auto; padding: 16px; display: grid; gap: 12px; }
 header { display: flex; align-items: center; justify-content: space-between; }
-h1 { font-size: 18px; margin: 0; }
+h1 { font-size: 18px; margin: 0; display: flex; align-items: center; gap: 8px; }
+/* The logo (docs/logo/mark.svg): a drop on the scale platform. */
+.logo { width: 26px; height: 26px; flex: none; }
+.logo .a { fill: var(--accent); } .logo .t { fill: var(--text); }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; }
 .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
 .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); }
@@ -39,6 +43,7 @@ h1 { font-size: 18px; margin: 0; }
 /* No scale: the grinder card is dimmed and its mode switch locked. */
 #machineCard.noscale #modeSeg, #machineCard.noscale #idleView { opacity: .45; }
 .noscale-msg { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: var(--bg); color: var(--warn); font-size: 14px; font-weight: 600; text-align: center; }
+button.connect { margin-top: 12px; padding: 10px 20px; }
 .grid .k { font-size: 12px; color: var(--muted); }
 .grid .v { font: 600 20px/1.2 var(--mono); font-variant-numeric: tabular-nums; }
 .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -53,6 +58,9 @@ select { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid 
 dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 13px; }
 dt { color: var(--muted); }
 dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }
+#results { font: 12px/1.5 var(--mono); margin: 0; padding: 0; list-style: none; }
+#results li { border-bottom: 1px solid var(--line); padding: 2px 0; }
+#results .t { color: var(--muted); margin-right: 8px; }
 #log { font: 12px/1.5 var(--mono); max-height: 220px; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
 #log li { border-bottom: 1px solid var(--line); padding: 2px 0; }
 #log .t { color: var(--muted); margin-right: 8px; }
@@ -110,18 +118,19 @@ dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }
 <body>
 <main>
   <header>
-    <h1>Brew Station</h1>
+    <h1><svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><path class="a" d="M32 8C32 8 17 25 17 35.5a15 15 0 0 0 30 0C47 25 32 8 32 8Z"/><rect class="t" x="12" y="55" width="40" height="4.5" rx="2.25"/></svg>Brew Station</h1>
     <span class="chip"><span id="linkDot" class="dot wait"></span><span id="linkText">connecting…</span></span>
   </header>
 
   <section class="card weight" id="weightCard">
     <div><span class="value" id="weight">--.-</span><span class="unit">g</span></div>
     <div class="sub" id="scaleLine" role="status">Scale not connected</div>
+    <button class="primary connect" id="connectScale" hidden>Connect scale</button>
   </section>
 
   <section class="card grid two">
     <div><div class="k">Timer</div><div class="v" id="timer">--:--</div></div>
-    <div><div class="k">Battery</div><div class="v" id="battery">–</div></div>
+    <div><div class="k">Battery</div><div class="v" id="battery">---%</div></div>
   </section>
 
   <section class="card">
@@ -144,7 +153,7 @@ dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }
       <button role="radio" aria-checked="false" data-mode="target">Target</button>
       <button role="radio" aria-checked="false" data-mode="manual">Manual</button>
     </div>
-    <div class="noscale-msg" id="noScaleMsg" hidden>Scale not connected: wake the scale to use the grinder</div>
+    <div class="noscale-msg" id="noScaleMsg" hidden>Scale not connected: wake the scale to use the grinder (a GbS grind also starts the search)</div>
     <p class="note" id="modeHint"></p>
     <p class="note warn" id="grinderWarn" hidden></p>
 
@@ -192,6 +201,12 @@ dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }
   <details class="more" id="more">
     <summary>Diagnostics</summary>
     <div class="more-body">
+      <section class="card">
+        <h2>Results the grinder got</h2>
+        <ul id="results" class="loglist"></ul>
+        <p class="note">Saved on the board: kept through updates and power cuts.</p>
+      </section>
+
       <section class="card">
         <h2>Events</h2>
         <ul id="log"></ul>
@@ -308,7 +323,7 @@ function renderGrinder(st) {
     $("sentBox").hidden = !ls;
     if (ls) {
       const mine = a && a.last && a.last.time_ms === ls.time_ms && Math.abs(a.last.weight_g - ls.weight_g) < 0.05;
-      const by = mine ? (a.last.by === "target" ? "Target reached" : "End of flow") : "Sent by hand";
+      const by = mine ? (a.last.by === "target" ? "Target reached" : "End of flow") + (a.last.time_from === "scale" ? " · scale timer" : " · board clock") : "Sent by hand";
       const out = ls.time_ms <= 10000 || ls.time_ms > 80000;
       $("sentWhen").textContent = "Sent to the grinder" + (ls.age_ms >= 0 ? ` · ${fmtAge(ls.age_ms)} ago` : "");
       $("sentValue").textContent = `${g1(ls.time_ms / 1000)} s · ${g1(ls.weight_g)} g`;
@@ -360,13 +375,20 @@ function render(st) {
   $("weightCard").classList.toggle("stale", stale);
   $("weight").textContent = s.weight_age_ms >= 0 ? s.weight_g.toFixed(1) : "--.-";
 
+  // Not connected: how the board is looking (fast for a few minutes after it
+  // went away, then now and then, or not at all until woken).
+  const who = s.name || "scale";
+  const seen = s.lost_ms >= 0 ? ` · last seen ${fmtAge(s.lost_ms)} ago` : "";
   const line = s.connected
     ? s.name + (s.weight_age_ms > 3000 ? " · no data" : "")
-    : (s.name ? `Searching for ${s.name}…` : "Searching for scale…");
+    : s.search === "slow" ? `Looking for ${who} now and then${seen}`
+    : s.search === "off" ? `Not looking for ${who}${seen}`
+    : `Searching for ${who}…${seen}`;
+  $("connectScale").hidden = s.connected || !(s.search === "slow" || s.search === "off");
   if (line !== lastScaleLine) { $("scaleLine").textContent = line; lastScaleLine = line; }
 
   $("timer").textContent = s.timer_s >= 0 ? `${String(Math.floor(s.timer_s / 60)).padStart(2, "0")}:${String(s.timer_s % 60).padStart(2, "0")}` : "--:--";
-  $("battery").textContent = s.battery_pct >= 0 ? `${s.battery_pct}%` : "–";
+  $("battery").textContent = s.battery_pct >= 0 ? `${s.battery_pct}%` : "---%";
   document.querySelectorAll("button[data-cmd]").forEach((b) => (b.disabled = !s.connected));
 
   const m = st.machine;
@@ -409,16 +431,54 @@ function addLog(uptimeMs, msg) {
   li.append(t, document.createTextNode(msg));
   const log = $("log");
   log.prepend(li);
-  while (log.children.length > 50) log.lastChild.remove();
+  while (log.children.length > 80) log.lastChild.remove();
+}
+
+const SRC = {
+  hand: "by hand", auto_board: "end of flow · board clock", auto_scale: "end of flow · scale timer",
+  target_board: "target · board clock", target_scale: "target · scale timer", unknown: "",
+};
+const KIND = { got: "", got_abort: "aborted: grinder skips it", unseen: "not picked up by the grinder" };
+
+async function loadResults() {
+  try {
+    const r = await fetch("/api/results", { cache: "no-store" });
+    if (!r.ok) return;
+    const j = await r.json();
+    const items = j.results.map((e) => {
+      const li = document.createElement("li");
+      const t = document.createElement("span"); t.className = "t";
+      t.textContent = e.boot === j.boot ? `${fmtAge((j.uptime_s - e.uptime_s) * 1000)} ago` : `boot ${e.boot}, at ${fmtUptime(e.uptime_s * 1000)}`;
+      const what = [SRC[e.src] || "", KIND[e.kind] || ""].filter(Boolean).join(" · ");
+      li.append(t, document.createTextNode(`${g1(e.time_ms / 1000)} s · ${g1(e.weight_g)} g` + (what ? ` · ${what}` : "")));
+      return li;
+    });
+    if (!items.length) { const li = document.createElement("li"); li.textContent = "None yet"; items.push(li); }
+    $("results").replaceChildren(...items);
+  } catch {}
+}
+
+// The board keeps the last lines: show them after a reload or a reconnect.
+async function loadLog() {
+  try {
+    const r = await fetch("/api/log", { cache: "no-store" });
+    if (!r.ok) return;
+    const j = await r.json();
+    $("log").replaceChildren();
+    for (const e of j.log) addLog(e.uptime_ms, e.msg);
+  } catch {}
 }
 
 function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
-  ws.onopen = () => { retryMs = 500; setLink("ok", "live"); };
+  ws.onopen = () => { retryMs = 500; setLink("ok", "live"); loadLog(); loadResults(); };
   ws.onmessage = (e) => {
     let m; try { m = JSON.parse(e.data); } catch { return; }
     if (m.t === "status") render(m);
-    else if (m.t === "log") addLog(m.uptime_ms, m.msg);
+    else if (m.t === "log") {
+      addLog(m.uptime_ms, m.msg);
+      if (m.msg.startsWith("Grinder got: shot") || m.msg.startsWith("No grinder poll")) setTimeout(loadResults, 500);
+    }
   };
   ws.onclose = () => {
     setLink("wait", "reconnecting…");
@@ -488,6 +548,8 @@ document.querySelectorAll("button[data-cmd]").forEach((b) =>
     const set = b.dataset.set ? `&set=${b.dataset.set}` : "";
     post(`/api/scale/cmd?c=${b.dataset.cmd}${set}`);
   }));
+// Searches non-stop again; the status that follows hides the button.
+$("connectScale").addEventListener("click", () => post("/api/scale/cmd?c=connect"));
 
 // Diagnostics starts closed on every load.
 

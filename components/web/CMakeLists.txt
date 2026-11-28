@@ -2,7 +2,7 @@ idf_component_register(
     SRCS "web.c"
     INCLUDE_DIRS "include"
     REQUIRES esp_common esp_http_server
-    PRIV_REQUIRES aku autoshot shot net grinder_api machine esp_app_format esp_timer log freertos
+    PRIV_REQUIRES aku autoshot results shot net grinder_api machine esp_app_format esp_timer log freertos
     EMBED_TXTFILES "www/index.html"
 )
 

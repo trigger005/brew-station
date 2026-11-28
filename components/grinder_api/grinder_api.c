@@ -14,12 +14,14 @@
 #include "freertos/semphr.h"
 #include "lwip/sockets.h"
 #include "machine_wire.h"
+#include "results.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "grinder";
 
 #define TICK_MS 500
 
+static grinder_api_log_fn s_log;
 static SemaphoreHandle_t s_lock;
 static machine_t s_m;
 static QueueHandle_t s_events;
@@ -31,7 +33,24 @@ static uint32_t s_polls, s_requests, s_refused, s_seq;
 static int64_t s_reported_at_ms = -1;
 static uint32_t s_dropped;  // machine events the queue had no room for  // when the last result went to the machine
 
+// What the grinder's last poll showed it (it acts only on changes, see
+// gbs-anywhere protocol/grinder.rs:97-101), and when.
+static int s_seen_status = -1, s_seen_extr = -1;
+static int64_t s_last_poll_ms = -1;
+#define POLL_GAP_LOG_MS 5000
+
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
+
+void grinder_api_set_logger(grinder_api_log_fn fn) { s_log = fn; }
+
+static const char *seen_name(int status, int extr) {
+    switch (status) {
+        case MA_STATUS_ON: return "ready";
+        case MA_STATUS_ACTIVE_SERVING: return "shot running";
+        case MA_STATUS_ACTIVE_FINISHING: return extr == EXTRACTION_STATUS_USER_ABORT ? "shot aborted" : "shot result";
+        default: return "other";
+    }
+}
 
 // Posts machine events not sent yet. Call with s_lock held.
 static void drain_events(void) {
@@ -41,6 +60,11 @@ static void drain_events(void) {
     size_t n = machine_events_after(&s_m, s_posted_seq, ev, MACHINE_EVENT_CAP);
     for (size_t i = 0; i < n; i++) {
         if (ev[i].kind == MEV_SHOT_REPORTED) s_reported_at_ms = ev[i].at_ms;
+        // Back to Ready without a grinder poll having got the result.
+        if (ev[i].kind == MEV_SHOT_FINISHED && !s_m.finishing_seen) {
+            results_add(RESULT_UNSEEN, s_m.result.time_ms, s_m.result.weight_g);
+            if (s_log) s_log("No grinder poll got the result (%.1f s, %.1f g)", s_m.result.time_ms / 1000.0, s_m.result.weight_g);
+        }
         if (s_events && xQueueSend(s_events, &ev[i], 0) != pdTRUE) {
             s_dropped++;
             ESP_LOGW(TAG, "Machine event %lu dropped (queue full)", (unsigned long)ev[i].seq);
@@ -140,6 +164,10 @@ static esp_err_t h_any(httpd_req_t *req) {
     wire_classify(method, path, (const uint8_t *)body, got, &xr);
 
     char reply[512] = "{}";
+    char note[128] = "", note2[96] = "";
+    int picked = 0;  // 1: this poll got a result, 2: an aborted shot
+    uint32_t got_ms = 0;
+    double got_g = 0;
     int64_t t = now_ms();
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if (wire_grinder_path(path)) s_requests++;
@@ -149,15 +177,32 @@ static esp_err_t h_any(httpd_req_t *req) {
             break;
         case WREQ_POLL_MAKO: {
             mako_state_t s;
-            machine_mako(&s_m, t, &s);
+            machine_poll(&s_m, t, &s);
             wire_mako_json(&s, reply, sizeof reply);
             s_polls++;
+            if (s_last_poll_ms >= 0 && t - s_last_poll_ms > POLL_GAP_LOG_MS)
+                snprintf(note2, sizeof note2, "Grinder polled again after %.1f s", (t - s_last_poll_ms) / 1000.0);
+            s_last_poll_ms = t;
+            if ((int)s.status != s_seen_status || (int)s.extraction_status != s_seen_extr) {
+                s_seen_status = s.status;
+                s_seen_extr = s.extraction_status;
+                if (s.status == MA_STATUS_ACTIVE_FINISHING) {
+                    picked = s.extraction_status == EXTRACTION_STATUS_USER_ABORT ? 2 : 1;
+                    got_ms = s.real_extraction_time_ms;
+                    got_g = s.flow_meter_volume_ml;
+                    snprintf(note, sizeof note, "Grinder got: %s %.1f s, %.1f g", seen_name(s.status, s.extraction_status),
+                             s.real_extraction_time_ms / 1000.0, s.flow_meter_volume_ml);
+                } else
+                    snprintf(note, sizeof note, "Grinder got: %s", seen_name(s.status, s.extraction_status));
+            }
             break;
         }
         case WREQ_GRIND_RESULT:
             machine_on_grind_result(&s_m, t, &xr.grind);
             break;
         case WREQ_START_BREW:
+            if (machine_phase(&s_m, t) == MACHINE_RUNNING)
+                snprintf(note, sizeof note, "Grinder pressed the knob again (shot already running)");
             machine_on_start_request(&s_m, t, xr.has_script_id, xr.script_id);
             break;
         case WREQ_MALFORMED:
@@ -179,6 +224,10 @@ static esp_err_t h_any(httpd_req_t *req) {
     printable(req->uri, strlen(req->uri), uri, sizeof uri);
     printf("GRINDER %lld %s %s %s%s%s%s -> %s\n", (long long)t, ip, method, uri, got ? " " : "", logbody,
            xr.kind == WREQ_MALFORMED ? " (unparsable)" : "", reply);
+
+    if (picked) results_add(picked == 2 ? RESULT_GOT_ABORT : RESULT_GOT, got_ms, got_g);
+    if (s_log && note2[0]) s_log("%s", note2);
+    if (s_log && note[0]) s_log("%s", note);
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, reply);

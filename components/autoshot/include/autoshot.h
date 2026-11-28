@@ -38,6 +38,7 @@ typedef struct {
     uint32_t last_time_ms;  // what was reported
     double last_grams;
     report_mode_t last_by;  // which mode reported it
+    bool last_from_scale;   // last_time_ms is the scale's timer (else the board clock)
     uint32_t seq;           // changes when anything above does
 } autoshot_status_t;
 
@@ -50,6 +51,8 @@ void autoshot_arm(int64_t knob_ms, bool tared);
 void autoshot_disarm(void);
 // Every weight reading, `t_ms` when it arrived (esp_timer ms).
 void autoshot_weight(int64_t t_ms, double grams);
+// Every timer frame from the scale (whole seconds), `t_ms` when it arrived.
+void autoshot_scale_timer(int64_t t_ms, uint32_t secs);
 
 // ESP_ERR_INVALID_STATE while a shot is watched; saved to NVS.
 esp_err_t autoshot_set_mode(report_mode_t mode);

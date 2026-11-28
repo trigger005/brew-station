@@ -55,12 +55,34 @@ menu "Brew Station"
 
     endmenu
 
+    menu "Scale search"
+
+        config CS_SCALE_FAST_SEARCH_MIN
+            int "Minutes to search non-stop after the scale goes away"
+            range 1 60
+            default 5
+            help
+                After a disconnect, at boot, and when woken (a GbS grind, a knob
+                press, the status page opening, Connect scale), the board looks
+                for the scale non-stop for this long. Scanning shares the radio
+                with WiFi, so after that it slows down (see below).
+
+        config CS_SCALE_SLOW_SEARCH_EVERY_S
+            int "Then look for 3 s every this many seconds (0 = stop)"
+            range 0 600
+            default 30
+            help
+                0 stops searching until something wakes it: a GbS grind, a knob
+                press, the status page opening, or the Connect scale button.
+
+    endmenu
+
     menu "Grinder link (E64 WS)"
 
         config CS_FINISHING_HOLD_S
             int "Finishing hold, seconds"
             range 3 60
-            default 6
+            default 15
             help
                 How long the shot result is shown as ACTIVE FINISHING. The grinder
                 takes the result only from a poll (every ~2 s) that sees it, so
@@ -119,6 +141,17 @@ menu "Brew Station"
             range 0 30
             default 0
             depends on CS_TIMING_MODE_DROPS
+
+        config CS_TIME_FROM_SCALE
+            bool "Report the scale's timer as the shot time"
+            default y
+            depends on CS_KNOB_SCALE_ACTIONS
+            help
+                The time sent to the grinder is what the AKU's own timer showed
+                at the end of the shot (whole seconds), so it matches the scale.
+                The board's clock (ms) is used instead when the scale sent no
+                running timer, or when the two differ by more than 2 s.
+                Off: always the board's clock.
 
     endmenu
 

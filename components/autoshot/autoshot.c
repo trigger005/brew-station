@@ -8,6 +8,7 @@
 // first drops and the end alike; it hasn't been measured yet (M2).
 #include "autoshot.h"
 
+#include "scale_clock.h"
 #include "shot_decide.h"
 
 #include <math.h>
@@ -19,6 +20,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "nvs.h"
+#include "results.h"
 #include "sdkconfig.h"
 #include "web.h"
 #include "grinder_api.h"
@@ -46,6 +48,11 @@ static SemaphoreHandle_t s_lock;
 static shot_detector_t *s_det;
 static autoshot_status_t s_st;
 static int64_t s_knob_ms;
+static scale_clock_t s_clock;  // the scale's timer, under s_lock
+
+// A frame at least this recent, and agreeing with the board within this.
+#define SCALE_TIMER_MAX_GAP_MS 2500
+#define SCALE_TIMER_MAX_DIFF_MS 2000
 
 const char *report_mode_code(report_mode_t m) {
     return m == REPORT_TARGET ? "target" : m == REPORT_MANUAL ? "manual" : "auto";
@@ -133,6 +140,7 @@ void autoshot_arm(int64_t knob_ms, bool tared) {
     else shot_init(s_det);
     shot_expecting(s_det, x.has_recipe, x.recipe_g);
     s_knob_ms = knob_ms;
+    scale_clock_reset(&s_clock);  // the timer is reset right before arming
     // Target needs the grinder's recipe weight; without one it works as auto.
     bool target = s_st.mode == REPORT_TARGET && x.has_recipe && isfinite(x.recipe_g) && x.recipe_g > 0;
     s_st.watching = target ? REPORT_TARGET : REPORT_AUTO;
@@ -158,7 +166,9 @@ void autoshot_disarm(void) {
     xSemaphoreGive(s_lock);
 }
 
-static void report(uint32_t time_ms, double grams, report_mode_t by, const char *what) {
+static void report(uint32_t time_ms, double grams, report_mode_t by, bool from_scale, const char *what) {
+    results_set_source(by == REPORT_TARGET ? (from_scale ? RESULT_SRC_TARGET_SCALE : RESULT_SRC_TARGET_BOARD)
+                                           : (from_scale ? RESULT_SRC_AUTO_SCALE : RESULT_SRC_AUTO_BOARD));
     machine_err_t e = grinder_api_report_shot(time_ms, grams);
     if (e != MACHINE_OK) {
         web_log("Auto: %s (%.1f s, %.1f g) but not sent: %s", what, time_ms / 1000.0, grams, machine_err_code(e));
@@ -169,9 +179,11 @@ static void report(uint32_t time_ms, double grams, report_mode_t by, const char 
     s_st.last_time_ms = time_ms;
     s_st.last_grams = grams;
     s_st.last_by = by;
+    s_st.last_from_scale = from_scale;
     s_st.seq++;
     xSemaphoreGive(s_lock);
-    web_log("Auto: %s, sent %.1f s, %.1f g", what, time_ms / 1000.0, grams);
+    web_log("Auto: %s, sent %.1f s (%s), %.1f g", what, time_ms / 1000.0, from_scale ? "scale timer" : "board clock",
+            grams);
 }
 
 void autoshot_weight(int64_t t_ms, double grams) {
@@ -198,6 +210,12 @@ void autoshot_weight(int64_t t_ms, double grams) {
 #endif
     };
     shot_decision_t dec = shot_decide(&p, &cfg);
+    // The moment the decision's time refers to: the reading that reached the
+    // target, or the end of flow (shot_decide.c).
+    int64_t at_ms = dec.kind == SHOT_REPORT_TARGET ? p.ms : p.shot.end_ms;
+    uint32_t scale_s = 0;
+    bool have_scale = dec.kind != SHOT_REPORT_NONE &&
+                      scale_clock_at(&s_clock, at_ms, SCALE_TIMER_MAX_GAP_MS, &scale_s);
     shot_progress_kind_t was = s_st.progress;
     bool first_drops = p.kind == SHOT_FLOWING && was != SHOT_FLOWING;
     s_st.progress = p.kind;
@@ -226,10 +244,42 @@ void autoshot_weight(int64_t t_ms, double grams) {
         printf("AUTO %lld done drops %lld..%lld (%lu ms) knob %lld -> report %lu ms %.1f g\n", (long long)t_ms,
                (long long)p.shot.start_ms, (long long)p.shot.end_ms, (unsigned long)p.shot.time_ms,
                (long long)cfg.knob_ms, (unsigned long)dec.time_ms, dec.grams);
-    report(dec.time_ms, dec.grams, dec.kind == SHOT_REPORT_TARGET ? REPORT_TARGET : REPORT_AUTO,
+    // The scale's timer runs from the knob press (mode 1) or the first drops
+    // (mode 3, so the pre-infusion is added the same way).
+    uint32_t time_ms = dec.time_ms;
+    bool from_scale = false;
+#if CONFIG_CS_TIME_FROM_SCALE
+    if (have_scale) {
+        uint32_t st = scale_s * 1000u + cfg.preinfusion_ms;
+        int64_t diff = (int64_t)st - (int64_t)dec.time_ms;
+        printf("AUTO time scale %lu ms board %lu ms (diff %lld)\n", (unsigned long)st, (unsigned long)dec.time_ms,
+               (long long)diff);
+        if (diff >= -SCALE_TIMER_MAX_DIFF_MS && diff <= SCALE_TIMER_MAX_DIFF_MS) {
+            time_ms = st;
+            from_scale = true;
+        } else {
+            web_log("Scale timer %lu s is off from the board's %.1f s: sending the board's", (unsigned long)scale_s,
+                    dec.time_ms / 1000.0);
+        }
+    } else {
+        printf("AUTO time no scale timer, board %lu ms\n", (unsigned long)dec.time_ms);
+        web_log("No running timer from the scale: sending the board's time");
+    }
+#else
+    (void)have_scale;
+    (void)scale_s;
+#endif
+    report(time_ms, dec.grams, dec.kind == SHOT_REPORT_TARGET ? REPORT_TARGET : REPORT_AUTO, from_scale,
            dec.kind == SHOT_REPORT_TARGET           ? "target reached"
            : dec.kind == SHOT_REPORT_END_BEFORE_TARGET ? "flow stopped before the target"
                                                         : "flow stopped");
+}
+
+void autoshot_scale_timer(int64_t t_ms, uint32_t secs) {
+    if (!s_lock) return;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (s_st.armed) scale_clock_frame(&s_clock, t_ms, secs);
+    xSemaphoreGive(s_lock);
 }
 
 void autoshot_get_status(autoshot_status_t *out) {

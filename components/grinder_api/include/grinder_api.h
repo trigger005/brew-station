@@ -51,6 +51,10 @@ void grinder_api_get_status(grinder_api_status_t *out);
 
 // The measured numbers, typed on the web page (M1) or from the detector (M3).
 // weight_g <= 0 means none: the recipe weight is used.
+// Where to log what the grinder sees (status changes in its polls, gaps).
+typedef void (*grinder_api_log_fn)(const char *fmt, ...);
+void grinder_api_set_logger(grinder_api_log_fn fn);
+
 machine_err_t grinder_api_report_shot(uint32_t time_ms, double weight_g);
 machine_err_t grinder_api_abort(void);
 
